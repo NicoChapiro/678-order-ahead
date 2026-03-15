@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-type StoreCode = 'store_1' | 'store_2' | 'store_3';
+type StoreCode = 'store_1';
 
 type Availability = {
   storeCode: StoreCode;
@@ -56,8 +56,6 @@ export default function ClientHomePage() {
         onChange={(event) => setStoreCode(event.target.value as StoreCode)}
       >
         <option value="store_1">Store 1</option>
-        <option value="store_2">Store 2</option>
-        <option value="store_3">Store 3</option>
       </select>
 
       {error ? <p>Estado: no disponible ({error})</p> : null}
