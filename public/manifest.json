@@ -1,0 +1,21 @@
+{
+  "name": "Order Ahead Platform",
+  "short_name": "OrderAhead",
+  "description": "Coffee shop order-ahead technical foundation",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
