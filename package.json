@@ -20,7 +20,7 @@
     "db:push": "drizzle-kit push"
   },
   "engines": {
-    "node": ">=20.11.0"
+    "node": "20.x"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.0",
