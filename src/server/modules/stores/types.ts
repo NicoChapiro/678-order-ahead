@@ -1,5 +1,5 @@
 export type StoreCode = 'store_1' | 'store_2' | 'store_3';
-export type StaffRole = 'owner' | 'barista' | 'customer' | 'viewer';
+export type StaffRole = 'owner' | 'barista';
 
 export type OrderAheadReasonCode =
   | 'manual_pause'

@@ -6,6 +6,9 @@ const serverEnvSchema = z.object({
   PHONE_AUTH_PROVIDER: z.string().min(1),
   PHONE_AUTH_API_KEY: z.string().min(1),
   INTERNAL_API_SECRET: z.string().min(1),
+  ADMIN_BOOTSTRAP_EMAIL: z.string().email().optional(),
+  ADMIN_BOOTSTRAP_PASSWORD: z.string().min(8).optional(),
+  ADMIN_BOOTSTRAP_NAME: z.string().min(1).optional(),
 });
 
 const clientEnvSchema = z.object({

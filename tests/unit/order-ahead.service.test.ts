@@ -1,5 +1,4 @@
 import {
-  OrderAheadPermissionError,
   OrderAheadValidationError,
   getAdminOrderAheadOverview,
   updateOrderAheadAvailability,
@@ -85,18 +84,5 @@ describe('order-ahead service', () => {
         actorRole: 'barista',
       }),
     ).rejects.toBeInstanceOf(OrderAheadValidationError);
-  });
-
-  it('rejects state changes from non-staff roles', async () => {
-    const repository = makeRepository();
-
-    await expect(
-      updateOrderAheadAvailability(repository, {
-        storeCode: 'store_1',
-        newIsEnabled: true,
-        actorUserId: 'customer-1',
-        actorRole: 'customer',
-      }),
-    ).rejects.toBeInstanceOf(OrderAheadPermissionError);
   });
 });

@@ -8,12 +8,11 @@ import {
   StoreNotFoundError,
   updateOrderAheadAvailability,
 } from '@/server/modules/stores/service';
+import { StaffAuthError, getRequiredStaffSession } from '@/server/modules/staff-auth/service';
 
 const paramsSchema = z.object({
   storeCode: z.enum(['store_1', 'store_2', 'store_3']),
 });
-
-const roleSchema = z.enum(['owner', 'barista', 'customer', 'viewer']);
 
 const updateSchema = z
   .object({
@@ -33,24 +32,15 @@ const updateSchema = z
     }
   });
 
-function parseActor(request: NextRequest) {
-  const actorUserId = request.headers.get('x-actor-user-id') ?? '';
-  const actorRole = roleSchema.safeParse(request.headers.get('x-actor-role') ?? 'viewer');
-
-  if (!actorUserId.trim() || !actorRole.success) {
-    return null;
-  }
-
-  return {
-    actorUserId: actorUserId.trim(),
-    actorRole: actorRole.data,
-  };
-}
-
 export async function GET(request: NextRequest, context: { params: Promise<{ storeCode: string }> }) {
-  const actor = parseActor(request);
-  if (!actor) {
-    return NextResponse.json({ error: 'Missing actor headers.' }, { status: 401 });
+  try {
+    await getRequiredStaffSession(request);
+  } catch (error) {
+    if (error instanceof StaffAuthError) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
+
+    return NextResponse.json({ error: 'Unexpected error.' }, { status: 500 });
   }
 
   const params = paramsSchema.safeParse(await context.params);
@@ -71,9 +61,16 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sto
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ storeCode: string }> }) {
-  const actor = parseActor(request);
-  if (!actor) {
-    return NextResponse.json({ error: 'Missing actor headers.' }, { status: 401 });
+  let actor;
+
+  try {
+    actor = await getRequiredStaffSession(request);
+  } catch (error) {
+    if (error instanceof StaffAuthError) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
+
+    return NextResponse.json({ error: 'Unexpected error.' }, { status: 500 });
   }
 
   const params = paramsSchema.safeParse(await context.params);
@@ -92,8 +89,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ st
       newIsEnabled: body.data.newIsEnabled,
       reasonCode: body.data.reasonCode,
       comment: body.data.comment,
-      actorUserId: actor.actorUserId,
-      actorRole: actor.actorRole,
+      actorUserId: actor.staffUserId,
+      actorRole: actor.role,
     });
 
     return NextResponse.json({ availability });
