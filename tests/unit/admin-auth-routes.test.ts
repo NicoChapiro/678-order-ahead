@@ -1,13 +1,9 @@
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ensureBootstrapOwner = vi.fn();
 const loginStaffUser = vi.fn();
 const invalidateStaffSession = vi.fn();
 
-vi.mock('@/server/modules/staff-auth/bootstrap', () => ({
-  ensureBootstrapOwner,
-}));
 
 vi.mock('@/server/modules/staff-auth/login', () => ({
   StaffLoginError: class StaffLoginError extends Error {},

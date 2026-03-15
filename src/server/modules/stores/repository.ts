@@ -87,32 +87,35 @@ export const storeAvailabilityRepository: StoreAvailabilityRepository = {
   },
 
   async setAvailabilityChange({ snapshot, event }) {
-    const storeRow = await getDb().select({ id: stores.id }).from(stores).where(eq(stores.code, snapshot.storeCode)).limit(1);
+    const db = getDb();
+    const storeRow = await db.select({ id: stores.id }).from(stores).where(eq(stores.code, snapshot.storeCode)).limit(1);
 
     if (!storeRow[0]) {
       return;
     }
 
-    await getDb()
-      .update(storeOrderAheadSettings)
-      .set({
-        isEnabled: snapshot.isOrderAheadEnabled,
-        disabledReasonCode: snapshot.disabledReasonCode,
-        disabledComment: snapshot.disabledComment,
-        updatedByUserId: event.changedByUserId,
-        updatedByRole: event.changedByRole,
-        updatedAt: new Date(snapshot.updatedAt),
-      })
-      .where(eq(storeOrderAheadSettings.storeId, storeRow[0].id));
+    await db.transaction(async (tx) => {
+      await tx
+        .update(storeOrderAheadSettings)
+        .set({
+          isEnabled: snapshot.isOrderAheadEnabled,
+          disabledReasonCode: snapshot.disabledReasonCode,
+          disabledComment: snapshot.disabledComment,
+          updatedByUserId: event.changedByUserId,
+          updatedByRole: event.changedByRole,
+          updatedAt: new Date(snapshot.updatedAt),
+        })
+        .where(eq(storeOrderAheadSettings.storeId, storeRow[0].id));
 
-    await getDb().insert(storeOrderAheadEvents).values({
-      storeId: storeRow[0].id,
-      newIsEnabled: event.newIsEnabled,
-      reasonCode: event.reasonCode,
-      comment: event.comment,
-      changedByUserId: event.changedByUserId,
-      changedByRole: event.changedByRole,
-      changedAt: new Date(event.changedAt),
+      await tx.insert(storeOrderAheadEvents).values({
+        storeId: storeRow[0].id,
+        newIsEnabled: event.newIsEnabled,
+        reasonCode: event.reasonCode,
+        comment: event.comment,
+        changedByUserId: event.changedByUserId,
+        changedByRole: event.changedByRole,
+        changedAt: new Date(event.changedAt),
+      });
     });
   },
 };

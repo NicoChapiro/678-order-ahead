@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getServerEnv } from '@/server/env';
-import { ensureBootstrapOwner } from '@/server/modules/staff-auth/bootstrap';
 import { StaffLoginError, loginStaffUser } from '@/server/modules/staff-auth/login';
 import { getStaffSessionCookieName } from '@/server/modules/staff-auth/service';
 
@@ -11,8 +10,6 @@ const loginSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  await ensureBootstrapOwner();
-
   const body = loginSchema.safeParse(await request.json());
   if (!body.success) {
     return NextResponse.json({ error: body.error.flatten() }, { status: 400 });

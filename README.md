@@ -66,6 +66,7 @@ Variables mínimas:
 - `npm run db:generate`
 - `npm run db:migrate`
 - `npm run db:push`
+- `npm run admin:bootstrap-owner`
 
 ## Próximos pasos (módulos de negocio)
 
@@ -74,3 +75,17 @@ Variables mínimas:
 3. Ledger wallet transaccional e idempotente.
 4. Menú/stock por tienda y backoffice admin.
 5. Loyalty points + canje de bebida gratis.
+
+## Bootstrap del primer owner admin
+
+Ejecutar una vez con variables de entorno configuradas:
+
+- `ADMIN_BOOTSTRAP_EMAIL`
+- `ADMIN_BOOTSTRAP_PASSWORD`
+- `ADMIN_BOOTSTRAP_NAME`
+
+Comando:
+
+- `npm run admin:bootstrap-owner`
+
+El script crea el owner sólo si no existe uno previo.
