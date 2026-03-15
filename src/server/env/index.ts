@@ -12,8 +12,29 @@ const clientEnvSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url(),
 });
 
-export const serverEnv = serverEnvSchema.parse(process.env);
+type ServerEnv = z.infer<typeof serverEnvSchema>;
+type ClientEnv = z.infer<typeof clientEnvSchema>;
 
-export const clientEnv = clientEnvSchema.parse({
-  NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
-});
+let cachedServerEnv: ServerEnv | null = null;
+let cachedClientEnv: ClientEnv | null = null;
+
+export function getServerEnv(): ServerEnv {
+  if (cachedServerEnv) {
+    return cachedServerEnv;
+  }
+
+  cachedServerEnv = serverEnvSchema.parse(process.env);
+  return cachedServerEnv;
+}
+
+export function getClientEnv(): ClientEnv {
+  if (cachedClientEnv) {
+    return cachedClientEnv;
+  }
+
+  cachedClientEnv = clientEnvSchema.parse({
+    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+  });
+
+  return cachedClientEnv;
+}

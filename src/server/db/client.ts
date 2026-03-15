@@ -1,9 +1,19 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { serverEnv } from '@/server/env';
+import { getServerEnv } from '@/server/env';
 
-const queryClient = postgres(serverEnv.DATABASE_URL, {
-  prepare: false,
-});
+let dbInstance: ReturnType<typeof drizzle> | null = null;
 
-export const db = drizzle(queryClient);
+export function getDb() {
+  if (dbInstance) {
+    return dbInstance;
+  }
+
+  const env = getServerEnv();
+  const queryClient = postgres(env.DATABASE_URL, {
+    prepare: false,
+  });
+
+  dbInstance = drizzle(queryClient);
+  return dbInstance;
+}

@@ -1,5 +1,5 @@
 import { and, desc, eq } from 'drizzle-orm';
-import { db } from '@/server/db/client';
+import { getDb } from '@/server/db/client';
 import {
   storeOrderAheadEvents,
   storeOrderAheadSettings,
@@ -22,7 +22,7 @@ type AvailabilityRow = {
 };
 
 async function getAvailabilityRow(storeCode: StoreCode): Promise<AvailabilityRow | null> {
-  const rows = await db
+  const rows = await getDb()
     .select({
       code: stores.code,
       name: stores.name,
@@ -58,12 +58,12 @@ export const storeAvailabilityRepository: StoreAvailabilityRepository = {
   },
 
   async getRecentHistory(storeCode, limit) {
-    const row = await db.select({ id: stores.id }).from(stores).where(eq(stores.code, storeCode)).limit(1);
+    const row = await getDb().select({ id: stores.id }).from(stores).where(eq(stores.code, storeCode)).limit(1);
     if (!row[0]) {
       return [];
     }
 
-    const historyRows = await db
+    const historyRows = await getDb()
       .select({
         id: storeOrderAheadEvents.id,
         newIsEnabled: storeOrderAheadEvents.newIsEnabled,
@@ -87,13 +87,13 @@ export const storeAvailabilityRepository: StoreAvailabilityRepository = {
   },
 
   async setAvailabilityChange({ snapshot, event }) {
-    const storeRow = await db.select({ id: stores.id }).from(stores).where(eq(stores.code, snapshot.storeCode)).limit(1);
+    const storeRow = await getDb().select({ id: stores.id }).from(stores).where(eq(stores.code, snapshot.storeCode)).limit(1);
 
     if (!storeRow[0]) {
       return;
     }
 
-    await db
+    await getDb()
       .update(storeOrderAheadSettings)
       .set({
         isEnabled: snapshot.isOrderAheadEnabled,
@@ -105,7 +105,7 @@ export const storeAvailabilityRepository: StoreAvailabilityRepository = {
       })
       .where(eq(storeOrderAheadSettings.storeId, storeRow[0].id));
 
-    await db.insert(storeOrderAheadEvents).values({
+    await getDb().insert(storeOrderAheadEvents).values({
       storeId: storeRow[0].id,
       newIsEnabled: event.newIsEnabled,
       reasonCode: event.reasonCode,
