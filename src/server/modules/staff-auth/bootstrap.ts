@@ -4,13 +4,14 @@ import { getServerEnv } from '@/server/env';
 import { staffUsers } from '@/server/db/schema';
 import { hashPassword } from '@/server/modules/staff-auth/service';
 
-let bootstrapAttempted = false;
+export type BootstrapOwnerResult =
+  | { created: true }
+  | {
+      created: false;
+      reason: 'already_exists' | 'missing_env';
+    };
 
-export async function ensureBootstrapOwner(): Promise<void> {
-  if (bootstrapAttempted) {
-    return;
-  }
-
+export async function bootstrapOwnerIfNeeded(): Promise<BootstrapOwnerResult> {
   const owner = await getDb()
     .select({ id: staffUsers.id })
     .from(staffUsers)
@@ -18,14 +19,12 @@ export async function ensureBootstrapOwner(): Promise<void> {
     .limit(1);
 
   if (owner[0]) {
-    bootstrapAttempted = true;
-    return;
+    return { created: false, reason: 'already_exists' };
   }
 
   const env = getServerEnv();
   if (!env.ADMIN_BOOTSTRAP_EMAIL || !env.ADMIN_BOOTSTRAP_PASSWORD || !env.ADMIN_BOOTSTRAP_NAME) {
-    bootstrapAttempted = true;
-    return;
+    return { created: false, reason: 'missing_env' };
   }
 
   await getDb().insert(staffUsers).values({
@@ -36,5 +35,5 @@ export async function ensureBootstrapOwner(): Promise<void> {
     isActive: true,
   });
 
-  bootstrapAttempted = true;
+  return { created: true };
 }
