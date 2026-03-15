@@ -20,6 +20,7 @@ export const healthcheck = pgTable('healthcheck', {
 
 export const storeCodeEnum = pgEnum('store_code', ['store_1', 'store_2', 'store_3']);
 export const weekdayEnum = pgEnum('weekday', ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
+export const staffRoleEnum = pgEnum('staff_role', ['owner', 'barista']);
 export const orderAheadReasonCodeEnum = pgEnum('order_ahead_reason_code', [
   'manual_pause',
   'equipment_issue',
@@ -95,3 +96,37 @@ export const storeOrderAheadEvents = pgTable('store_order_ahead_events', {
   changedByRole: varchar('changed_by_role', { length: 32 }).notNull(),
   changedAt: timestamp('changed_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const staffUsers = pgTable(
+  'staff_users',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    email: varchar('email', { length: 320 }).notNull(),
+    name: varchar('name', { length: 120 }).notNull(),
+    role: staffRoleEnum('role').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    isActive: boolean('is_active').default(true).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    emailUniqueIdx: uniqueIndex('staff_users_email_unique_idx').on(table.email),
+  }),
+);
+
+export const staffSessions = pgTable(
+  'staff_sessions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    staffUserId: uuid('staff_user_id')
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    tokenHashUniqueIdx: uniqueIndex('staff_sessions_token_hash_unique_idx').on(table.tokenHash),
+  }),
+);

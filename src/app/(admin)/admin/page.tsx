@@ -1,9 +1,9 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 type StoreCode = 'store_1' | 'store_2' | 'store_3';
-type Role = 'owner' | 'barista' | 'customer' | 'viewer';
 
 type AdminOverview = {
   availability: {
@@ -26,9 +26,8 @@ type AdminOverview = {
 };
 
 export default function AdminHomePage() {
+  const router = useRouter();
   const [storeCode, setStoreCode] = useState<StoreCode>('store_1');
-  const [actorRole, setActorRole] = useState<Role>('owner');
-  const [actorUserId, setActorUserId] = useState('admin-1');
   const [newIsEnabled, setNewIsEnabled] = useState(true);
   const [reasonCode, setReasonCode] = useState('manual_pause');
   const [comment, setComment] = useState('');
@@ -37,13 +36,14 @@ export default function AdminHomePage() {
 
   async function loadOverview() {
     const response = await fetch(`/api/admin/stores/${storeCode}/order-ahead`, {
-      headers: {
-        'x-actor-role': actorRole,
-        'x-actor-user-id': actorUserId,
-      },
       cache: 'no-store',
     });
     const payload = await response.json();
+
+    if (response.status === 401) {
+      router.push('/admin/login');
+      return;
+    }
 
     if (!response.ok) {
       setError(payload.error ?? 'Could not load admin overview.');
@@ -60,7 +60,7 @@ export default function AdminHomePage() {
   useEffect(() => {
     loadOverview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeCode, actorRole, actorUserId]);
+  }, [storeCode]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -68,8 +68,6 @@ export default function AdminHomePage() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-actor-role': actorRole,
-        'x-actor-user-id': actorUserId,
       },
       body: JSON.stringify({
         newIsEnabled,
@@ -79,6 +77,11 @@ export default function AdminHomePage() {
     });
 
     const payload = await response.json();
+    if (response.status === 401) {
+      router.push('/admin/login');
+      return;
+    }
+
     if (!response.ok) {
       setError(payload.error?.formErrors?.[0] ?? payload.error ?? 'Could not update status.');
       return;
@@ -87,10 +90,18 @@ export default function AdminHomePage() {
     await loadOverview();
   }
 
+  async function onLogout() {
+    await fetch('/api/admin/auth/logout', { method: 'POST' });
+    router.push('/admin/login');
+  }
+
   return (
     <main>
       <h1>Admin</h1>
       <p>Order-ahead controls (owner/barista only).</p>
+      <button type="button" onClick={onLogout}>
+        Logout
+      </button>
 
       <form onSubmit={onSubmit}>
         <label htmlFor="store-code">Store</label>{' '}
@@ -103,25 +114,6 @@ export default function AdminHomePage() {
           <option value="store_2">Store 2</option>
           <option value="store_3">Store 3</option>
         </select>{' '}
-
-        <label htmlFor="actor-role">Role</label>{' '}
-        <select
-          id="actor-role"
-          value={actorRole}
-          onChange={(event) => setActorRole(event.target.value as Role)}
-        >
-          <option value="owner">owner</option>
-          <option value="barista">barista</option>
-          <option value="customer">customer</option>
-          <option value="viewer">viewer</option>
-        </select>{' '}
-
-        <label htmlFor="actor-user-id">Actor user id</label>{' '}
-        <input
-          id="actor-user-id"
-          value={actorUserId}
-          onChange={(event) => setActorUserId(event.target.value)}
-        />
 
         <div>
           <label>
