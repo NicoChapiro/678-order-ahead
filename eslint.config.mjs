@@ -1,10 +1,18 @@
-import nextVitalsModule from 'eslint-config-next/core-web-vitals.js';
+import { FlatCompat } from '@eslint/eslintrc';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import prettier from 'eslint-config-prettier';
 
-const nextVitals = Array.isArray(nextVitalsModule)
-  ? nextVitalsModule
-  : Array.isArray(nextVitalsModule.default)
-    ? nextVitalsModule.default
-    : [nextVitalsModule];
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
-export default [...nextVitals, prettier];
+const compat = new FlatCompat({
+  baseDirectory: __dirname,
+});
+
+const config = [
+  ...compat.extends('next/core-web-vitals'),
+  prettier,
+];
+
+export default config;
