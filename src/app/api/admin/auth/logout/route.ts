@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerEnv } from '@/server/env';
+import { getBootstrapEnv } from '@/server/env';
 import { getStaffSessionCookieName, invalidateStaffSession } from '@/server/modules/staff-auth/service';
 
 export async function POST(request: NextRequest) {
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   response.cookies.set(getStaffSessionCookieName(), '', {
     httpOnly: true,
     sameSite: 'lax',
-    secure: getServerEnv().NODE_ENV === 'production',
+    secure: getBootstrapEnv().NODE_ENV === 'production',
     path: '/',
     expires: new Date(0),
   });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerEnv } from '@/server/env';
+import { getBootstrapEnv } from '@/server/env';
 import { StaffLoginError, loginStaffUser } from '@/server/modules/staff-auth/login';
 import { getStaffSessionCookieName } from '@/server/modules/staff-auth/service';
 
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     response.cookies.set(getStaffSessionCookieName(), session.token, {
       httpOnly: true,
       sameSite: 'lax',
-      secure: getServerEnv().NODE_ENV === 'production',
+      secure: getBootstrapEnv().NODE_ENV === 'production',
       path: '/',
       expires: session.expiresAt,
     });
