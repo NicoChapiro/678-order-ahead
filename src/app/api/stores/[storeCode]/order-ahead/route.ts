@@ -29,6 +29,8 @@ export async function GET(_: Request, context: { params: Promise<{ storeCode: st
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 
+    console.error('Unexpected error in customer order-ahead availability route.', error);
+
     return NextResponse.json({ error: 'Unexpected error.' }, { status: 500 });
   }
 }
