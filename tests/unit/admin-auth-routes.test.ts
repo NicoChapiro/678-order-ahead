@@ -16,7 +16,7 @@ vi.mock('@/server/modules/staff-auth/service', () => ({
 }));
 
 vi.mock('@/server/env', () => ({
-  getServerEnv: () => ({ NODE_ENV: 'test' }),
+  getBootstrapEnv: () => ({ NODE_ENV: 'test' }),
 }));
 
 describe('admin auth routes', () => {

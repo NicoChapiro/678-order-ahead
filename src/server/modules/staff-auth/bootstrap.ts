@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/server/db/client';
-import { getServerEnv } from '@/server/env';
+import { getBootstrapEnv } from '@/server/env';
 import { staffUsers } from '@/server/db/schema';
 import { hashPassword } from '@/server/modules/staff-auth/service';
 
@@ -22,7 +22,7 @@ export async function bootstrapOwnerIfNeeded(): Promise<BootstrapOwnerResult> {
     return { created: false, reason: 'already_exists' };
   }
 
-  const env = getServerEnv();
+  const env = getBootstrapEnv();
   if (!env.ADMIN_BOOTSTRAP_EMAIL || !env.ADMIN_BOOTSTRAP_PASSWORD || !env.ADMIN_BOOTSTRAP_NAME) {
     return { created: false, reason: 'missing_env' };
   }

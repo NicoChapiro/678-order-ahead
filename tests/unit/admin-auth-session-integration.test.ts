@@ -5,7 +5,7 @@ const loginStaffUser = vi.fn();
 const getRequiredStaffSession = vi.fn();
 
 vi.mock('@/server/env', () => ({
-  getServerEnv: () => ({ NODE_ENV: 'test' }),
+  getBootstrapEnv: () => ({ NODE_ENV: 'test' }),
 }));
 
 vi.mock('@/server/modules/staff-auth/login', () => ({
