@@ -13,33 +13,79 @@ type Availability = {
   updatedAt: string;
 };
 
+type CustomerMenu = {
+  storeCode: StoreCode;
+  storeName: string;
+  items: Array<{
+    storeMenuItemId: string;
+    menuItemId: string;
+    code: string;
+    name: string;
+    description: string | null;
+    priceAmount: number;
+    currencyCode: 'CLP';
+    isVisible: boolean;
+    isInStock: boolean;
+    sortOrder: number | null;
+    baseIsActive: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+};
+
+function formatClp(amount: number) {
+  return new Intl.NumberFormat('es-CL', {
+    style: 'currency',
+    currency: 'CLP',
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
 export default function ClientHomePage() {
   const [storeCode, setStoreCode] = useState<StoreCode>('store_1');
   const [availability, setAvailability] = useState<Availability | null>(null);
+  const [menu, setMenu] = useState<CustomerMenu | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
 
-    async function loadAvailability() {
+    async function loadStoreData() {
       setError(null);
-      const response = await fetch(`/api/stores/${storeCode}/order-ahead`, { cache: 'no-store' });
-      const payload = await response.json();
+
+      const [availabilityResponse, menuResponse] = await Promise.all([
+        fetch(`/api/stores/${storeCode}/order-ahead`, { cache: 'no-store' }),
+        fetch(`/api/stores/${storeCode}/menu`, { cache: 'no-store' }),
+      ]);
+
+      const [availabilityPayload, menuPayload] = await Promise.all([
+        availabilityResponse.json(),
+        menuResponse.json(),
+      ]);
 
       if (!isMounted) {
         return;
       }
 
-      if (!response.ok) {
+      if (!availabilityResponse.ok) {
         setAvailability(null);
-        setError(payload.error ?? 'Could not load availability.');
+        setMenu(null);
+        setError(availabilityPayload.error ?? 'Could not load availability.');
         return;
       }
 
-      setAvailability(payload.availability as Availability);
+      if (!menuResponse.ok) {
+        setAvailability(availabilityPayload.availability as Availability);
+        setMenu(null);
+        setError(menuPayload.error ?? 'Could not load menu.');
+        return;
+      }
+
+      setAvailability(availabilityPayload.availability as Availability);
+      setMenu(menuPayload.menu as CustomerMenu);
     }
 
-    loadAvailability();
+    loadStoreData();
 
     return () => {
       isMounted = false;
@@ -57,9 +103,8 @@ export default function ClientHomePage() {
       >
         <option value="store_1">Store 1</option>
       </select>
-
+      <p>Tienda seleccionada: {availability?.storeName ?? storeCode}</p>
       {error ? <p>Estado: no disponible ({error})</p> : null}
-
       {availability ? (
         <section>
           <h2>{availability.storeName}</h2>
@@ -75,6 +120,21 @@ export default function ClientHomePage() {
           ) : null}
         </section>
       ) : null}
+      <section>
+        <h2>Menú disponible</h2>
+        {!menu ? null : menu.items.length === 0 ? (
+          <p>Esta sucursal no tiene productos disponibles por ahora.</p>
+        ) : (
+          <ul>
+            {menu.items.map((item) => (
+              <li key={item.storeMenuItemId}>
+                <strong>{item.name}</strong> — {formatClp(item.priceAmount)}
+                {item.description ? <div>{item.description}</div> : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </main>
   );
 }
