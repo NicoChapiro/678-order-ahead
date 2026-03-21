@@ -703,7 +703,7 @@ export default function AdminHomePage() {
               Selector de sucursal, estado operativo y órdenes que requieren atención inmediata.
             </p>
           </div>
-          <div className="field" style={{ minWidth: 220 }}>
+          <div className="field summary-card__control">
             <label className="field-label" htmlFor="store-select">
               Sucursal activa
             </label>
@@ -902,7 +902,7 @@ export default function AdminHomePage() {
                   flujo.
                 </p>
               </div>
-              <div className="field" style={{ minWidth: 220 }}>
+              <div className="field card-header__control">
                 <label className="field-label" htmlFor="order-filter">
                   Filtro por estado
                 </label>
@@ -945,7 +945,7 @@ export default function AdminHomePage() {
                       : null;
 
                   return (
-                    <article key={order.id} className="order-card">
+                    <article key={order.id} className="order-card compact-card">
                       <div className="order-card__header">
                         <div className="stack" style={{ gap: '0.4rem' }}>
                           <div className="chip-row">
@@ -1026,7 +1026,7 @@ export default function AdminHomePage() {
 
                       <div className="stack">
                         {order.status === 'pending_acceptance' ? (
-                          <div className="form-grid form-row--inline">
+                          <div className="form-grid form-row--inline compact-card">
                             <button
                               className="button button--primary"
                               type="button"
@@ -1061,7 +1061,7 @@ export default function AdminHomePage() {
                         ) : null}
 
                         {order.status === 'accepted' ? (
-                          <div className="form-grid form-row--inline">
+                          <div className="form-grid form-row--inline compact-card">
                             <button
                               className="button button--primary"
                               type="button"
@@ -1096,7 +1096,7 @@ export default function AdminHomePage() {
                         ) : null}
 
                         {order.status === 'ready_for_pickup' ? (
-                          <div className="form-grid form-row--inline">
+                          <div className="form-grid form-row--inline compact-card">
                             <button
                               className="button button--primary"
                               type="button"
@@ -1152,103 +1152,112 @@ export default function AdminHomePage() {
               <LoadingBlock label="Cargando configuración del menú…" />
             ) : (
               <>
-                <div className="section-grid">
-                  <form
-                    onSubmit={onCreateBaseItem}
-                    className="section-card"
-                    style={{ padding: '1.1rem' }}
-                  >
-                    <div className="stack">
-                      <h3>Crear producto base</h3>
-                      <p className="helper-text">
-                        Define el producto reusable una sola vez antes de asignarlo a sucursales.
-                      </p>
-                    </div>
-                    <label className="field">
-                      <span className="field-label">Code</span>
-                      <input
-                        value={createCode}
-                        onChange={(event) => setCreateCode(event.target.value)}
-                        placeholder="latte_12oz"
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Nombre</span>
-                      <input
-                        value={createName}
-                        onChange={(event) => setCreateName(event.target.value)}
-                        placeholder="Latte"
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Descripción</span>
-                      <textarea
-                        value={createDescription}
-                        onChange={(event) => setCreateDescription(event.target.value)}
-                        placeholder="Notas breves para equipo y cliente"
-                      />
-                    </label>
-                    <button
-                      className="button button--primary"
-                      type="submit"
-                      disabled={menuActionLoading === 'create'}
+                <div className="stack compact-list">
+                  <InlineFeedback
+                    tone="info"
+                    message="Flujo único del menú: primero crea el producto base, luego adjúntalo a la sucursal activa y finalmente revisa la configuración visible."
+                  />
+                  <div className="menu-config-grid">
+                    <form
+                      onSubmit={onCreateBaseItem}
+                      className="section-card compact-card"
+                      style={{ padding: '1.1rem' }}
                     >
-                      {menuActionLoading === 'create' ? 'Creando…' : 'Crear producto'}
-                    </button>
-                  </form>
-
-                  <form
-                    onSubmit={onAttachItem}
-                    className="section-card"
-                    style={{ padding: '1.1rem' }}
-                  >
-                    <div className="stack">
-                      <h3>Adjuntar a sucursal</h3>
-                      <p className="helper-text">
-                        Convierte un producto base en una opción vendible dentro de la tienda
-                        activa.
-                      </p>
-                    </div>
-                    <label className="field">
-                      <span className="field-label">Producto base</span>
-                      <select
-                        value={attachMenuItemId}
-                        onChange={(event) => setAttachMenuItemId(event.target.value)}
+                      <div className="stack">
+                        <h3>Crear producto base</h3>
+                        <p className="helper-text">
+                          Define el producto reusable una sola vez antes de asignarlo a sucursales.
+                        </p>
+                      </div>
+                      <label className="field">
+                        <span className="field-label">Code</span>
+                        <input
+                          value={createCode}
+                          onChange={(event) => setCreateCode(event.target.value)}
+                          placeholder="latte_12oz"
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Nombre</span>
+                        <input
+                          value={createName}
+                          onChange={(event) => setCreateName(event.target.value)}
+                          placeholder="Latte"
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Descripción</span>
+                        <textarea
+                          value={createDescription}
+                          onChange={(event) => setCreateDescription(event.target.value)}
+                          placeholder="Notas breves para equipo y cliente"
+                        />
+                      </label>
+                      <button
+                        className="button button--primary"
+                        type="submit"
+                        disabled={menuActionLoading === 'create'}
                       >
-                        {menuOverview?.availableBaseItems.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Precio CLP</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={attachPriceAmount}
-                        onChange={(event) => setAttachPriceAmount(event.target.value)}
-                      />
-                    </label>
-                    <button
-                      className="button button--primary"
-                      type="submit"
-                      disabled={menuActionLoading === 'attach'}
+                        {menuActionLoading === 'create' ? 'Creando…' : 'Crear producto'}
+                      </button>
+                    </form>
+
+                    <form
+                      onSubmit={onAttachItem}
+                      className="section-card compact-card"
+                      style={{ padding: '1.1rem' }}
                     >
-                      {menuActionLoading === 'attach' ? 'Adjuntando…' : 'Adjuntar producto'}
-                    </button>
-                  </form>
+                      <div className="stack">
+                        <h3>Adjuntar a sucursal</h3>
+                        <p className="helper-text">
+                          Convierte un producto base en una opción vendible dentro de la tienda
+                          activa.
+                        </p>
+                      </div>
+                      <label className="field">
+                        <span className="field-label">Producto base</span>
+                        <select
+                          value={attachMenuItemId}
+                          onChange={(event) => setAttachMenuItemId(event.target.value)}
+                        >
+                          {menuOverview?.availableBaseItems.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Precio CLP</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={attachPriceAmount}
+                          onChange={(event) => setAttachPriceAmount(event.target.value)}
+                        />
+                      </label>
+                      <button
+                        className="button button--primary"
+                        type="submit"
+                        disabled={menuActionLoading === 'attach'}
+                      >
+                        {menuActionLoading === 'attach' ? 'Adjuntando…' : 'Adjuntar producto'}
+                      </button>
+                    </form>
+                  </div>
                 </div>
 
-                <div className="stack">
+                <div className="stack compact-list">
                   <h3>Configuración actual</h3>
                   {menuOverview?.configuredItems.length ? (
-                    <div className="list-grid">
+                    <div className="list-grid compact-list">
                       {menuOverview.configuredItems.map((item) => {
                         const pending = menuActionLoading === item.menuItemId;
                         return (
-                          <article key={item.storeMenuItemId} className="menu-item-card">
+                          <article
+                            key={item.storeMenuItemId}
+                            className="menu-item-card compact-card"
+                          >
                             <div className="menu-item-card__header">
                               <div className="stack" style={{ gap: '0.35rem' }}>
                                 <strong>{item.name}</strong>
@@ -1274,7 +1283,7 @@ export default function AdminHomePage() {
                                 </div>
                               </div>
                             </div>
-                            <div className="inline-actions">
+                            <div className="inline-actions inline-actions--tight">
                               <button
                                 className="button button--secondary"
                                 type="button"
@@ -1374,15 +1383,15 @@ export default function AdminHomePage() {
                   <StatItem label="Moneda" value={walletSummary.wallet.currencyCode} />
                 </StatGrid>
 
-                <div className="stack">
-                  <div className="section-card" style={{ padding: '1rem' }}>
+                <div className="wallet-layout">
+                  <div className="section-card compact-card" style={{ padding: '1rem' }}>
                     <div className="stack">
                       <h3>Top-up por caja</h3>
                       <p className="helper-text">
                         Acción primaria para una carga inmediata validada por backend según rol.
                       </p>
                     </div>
-                    <form onSubmit={onCashTopup} className="form-grid">
+                    <form onSubmit={onCashTopup} className="form-grid form-grid--two compact-card">
                       <label className="field">
                         <span className="field-label">Monto</span>
                         <input
@@ -1410,14 +1419,14 @@ export default function AdminHomePage() {
                     </form>
                   </div>
 
-                  <div className="section-card" style={{ padding: '1rem' }}>
+                  <div className="section-card compact-card" style={{ padding: '1rem' }}>
                     <div className="stack">
                       <h3>Ajuste admin</h3>
                       <p className="helper-text">
                         Acción sensible con motivo obligatorio para dejar trazabilidad operativa.
                       </p>
                     </div>
-                    <form onSubmit={onAdjustment} className="form-grid">
+                    <form onSubmit={onAdjustment} className="form-grid form-grid--two compact-card">
                       <label className="field">
                         <span className="field-label">Dirección</span>
                         <select
@@ -1458,7 +1467,7 @@ export default function AdminHomePage() {
                   </div>
                 </div>
 
-                <div className="stack">
+                <div className="stack compact-list">
                   <h3>Transacciones</h3>
                   {walletTransactions.length === 0 ? (
                     <EmptyState
@@ -1466,9 +1475,9 @@ export default function AdminHomePage() {
                       description="Cuando existan top-ups, órdenes o ajustes, aparecerán aquí con actor, referencia y nota."
                     />
                   ) : (
-                    <div className="list-grid">
+                    <div className="list-grid compact-list">
                       {walletTransactions.map((transaction) => (
-                        <div key={transaction.id} className="transaction-row">
+                        <div key={transaction.id} className="transaction-row compact-card">
                           <div className="stack" style={{ gap: '0.35rem' }}>
                             <div className="chip-row">
                               <StatusChip label={transaction.entryType} tone="muted" />

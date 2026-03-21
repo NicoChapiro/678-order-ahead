@@ -461,7 +461,7 @@ export default function ClientHomePage() {
               comprar.
             </p>
           </div>
-          <div className="field" style={{ minWidth: 220 }}>
+          <div className="field summary-card__control">
             <label className="field-label" htmlFor="store-select">
               Sucursal
             </label>
@@ -562,14 +562,17 @@ export default function ClientHomePage() {
                   <StatItem label="Moneda" value={walletSummary.wallet.currencyCode} />
                 </StatGrid>
 
-                <div className="section-card" style={{ padding: '1rem' }}>
+                <div className="section-card compact-card" style={{ padding: '1rem' }}>
                   <div className="stack">
                     <h3>Solicitar top-up por transferencia</h3>
                     <p className="helper-text">
                       Completa la referencia para reducir errores y dejar trazabilidad del depósito.
                     </p>
                   </div>
-                  <form onSubmit={onTransferRequest} className="form-grid form-grid--two">
+                  <form
+                    onSubmit={onTransferRequest}
+                    className="form-grid form-grid--two compact-card"
+                  >
                     <label className="field">
                       <span className="field-label">Monto</span>
                       <input
@@ -645,7 +648,7 @@ export default function ClientHomePage() {
                   {menu.items.map((item) => {
                     const quantity = quantities[item.menuItemId] ?? 0;
                     return (
-                      <article key={item.storeMenuItemId} className="menu-item-card">
+                      <article key={item.storeMenuItemId} className="menu-item-card compact-card">
                         <div className="menu-item-card__header">
                           <div className="stack" style={{ gap: '0.35rem' }}>
                             <strong>{item.name}</strong>
@@ -661,7 +664,7 @@ export default function ClientHomePage() {
                           </div>
                           <strong>{formatClp(item.priceAmount)}</strong>
                         </div>
-                        <div className="toolbar">
+                        <div className="toolbar transaction-meta">
                           <div className="quantity-control" aria-label={`Cantidad de ${item.name}`}>
                             <button
                               type="button"
@@ -703,8 +706,8 @@ export default function ClientHomePage() {
                   })}
                 </div>
 
-                <div className="surface-soft stack">
-                  <div className="toolbar">
+                <div className="surface-soft stack compact-card">
+                  <div className="toolbar transaction-meta">
                     <div className="stack" style={{ gap: '0.2rem' }}>
                       <span className="row-label">Total estimado</span>
                       <strong style={{ fontSize: '1.6rem' }}>{formatClp(orderTotal)}</strong>
@@ -759,7 +762,7 @@ export default function ClientHomePage() {
                   const remainingWholeMinutes = Math.max(0, Math.ceil(remainingMs / 60000));
 
                   return (
-                    <article key={order.id} className="order-card">
+                    <article key={order.id} className="order-card compact-card">
                       <div className="order-card__header">
                         <div className="stack" style={{ gap: '0.4rem' }}>
                           <div className="chip-row">
@@ -811,7 +814,7 @@ export default function ClientHomePage() {
                         </div>
                       </div>
 
-                      <div className="surface-soft stack">
+                      <div className="surface-soft stack compact-card">
                         <div className="order-items">
                           {order.items.map((item) => (
                             <div key={item.id} className="order-item-row">
@@ -872,9 +875,9 @@ export default function ClientHomePage() {
                 description="Tus top-ups y pagos aparecerán aquí apenas existan transacciones en la wallet."
               />
             ) : (
-              <div className="list-grid">
+              <div className="list-grid compact-list">
                 {walletTransactions.map((transaction) => (
-                  <div key={transaction.id} className="transaction-row">
+                  <div key={transaction.id} className="transaction-row compact-card">
                     <div className="stack" style={{ gap: '0.35rem' }}>
                       <div className="chip-row">
                         <StatusChip label={transaction.entryType} tone="muted" />
