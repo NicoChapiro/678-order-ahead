@@ -6,6 +6,7 @@ import {
   CancellationWindowExpiredError,
   InvalidOrderStateTransitionError,
   OrderNotFoundError,
+  OrderValidationError,
 } from '@/server/modules/orders/service';
 
 const bodySchema = z.object({
@@ -23,14 +24,17 @@ export async function POST(
   }
 
   try {
-    const order = await cancelOrderByCustomer(orderRepository, { orderId, ...body.data });
-    return NextResponse.json({ order });
+    const result = await cancelOrderByCustomer(orderRepository, { orderId, ...body.data });
+    return NextResponse.json(result);
   } catch (error) {
     if (error instanceof CancellationWindowExpiredError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof InvalidOrderStateTransitionError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof OrderValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
     if (error instanceof OrderNotFoundError) {
       return NextResponse.json({ error: error.message }, { status: 404 });

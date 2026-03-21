@@ -96,12 +96,23 @@ type AdminOrder = {
   completedAt: string | null;
   noShowAt: string | null;
   rejectionReason: string | null;
+  cancellationReason: string | null;
+  lastEvent: {
+    eventType: string;
+    actorUserId: string | null;
+    actorRole: string | null;
+    metadataJson: Record<string, unknown> | null;
+    createdAt: string;
+  } | null;
   items: Array<{
     id: string;
     itemNameSnapshot: string;
     quantity: number;
   }>;
 };
+
+type OrderActionName = 'accept' | 'ready' | 'complete' | 'reject' | 'no-show';
+type OrderStatusFilter = 'all' | 'pending_acceptance' | 'accepted' | 'rejected' | 'cancelled_by_customer' | 'ready_for_pickup' | 'completed' | 'no_show';
 
 function formatClp(amount: number) {
   return new Intl.NumberFormat('es-CL', {
@@ -167,7 +178,11 @@ export default function AdminHomePage() {
   const [adjustmentNote, setAdjustmentNote] = useState('Ajuste operativo');
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [orderFeedback, setOrderFeedback] = useState<string | null>(null);
+  const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatusFilter>('all');
+  const [orderActionPending, setOrderActionPending] = useState<Record<string, OrderActionName | null>>({});
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
+  const [noShowReasons, setNoShowReasons] = useState<Record<string, string>>({});
 
   async function loadOverview() {
     const response = await fetch(`/api/admin/stores/${storeCode}/order-ahead`, {
@@ -216,7 +231,8 @@ export default function AdminHomePage() {
   }
 
   async function loadOrders() {
-    const response = await fetch(`/api/admin/stores/${storeCode}/orders`, {
+    const statusQuery = orderStatusFilter === 'all' ? '' : `?status=${encodeURIComponent(orderStatusFilter)}`;
+    const response = await fetch(`/api/admin/stores/${storeCode}/orders${statusQuery}`, {
       cache: 'no-store',
     });
     const payload = await response.json();
@@ -284,7 +300,7 @@ export default function AdminHomePage() {
   useEffect(() => {
     void Promise.all([loadOverview(), loadMenuOverview(), loadOrders()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeCode]);
+  }, [storeCode, orderStatusFilter]);
 
   useEffect(() => {
     void loadWalletData('demo-wallet-customer');
@@ -485,9 +501,21 @@ export default function AdminHomePage() {
     await loadWalletData();
   }
 
-  async function onOrderAction(orderId: string, action: 'accept' | 'ready' | 'complete' | 'no-show') {
-    const response = await fetch(`/api/admin/orders/${orderId}/${action}`, { method: 'POST' });
+  async function submitOrderAction(orderId: string, action: OrderActionName, body?: Record<string, unknown>) {
+    setOrdersError(null);
+    setOrderFeedback(null);
+    setOrderActionPending((current) => ({ ...current, [orderId]: action }));
+
+    const response = await fetch(`/api/admin/orders/${orderId}/${action}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body ?? {}),
+    });
     const payload = await response.json();
+
+    setOrderActionPending((current) => ({ ...current, [orderId]: null }));
 
     if (response.status === 401) {
       router.push('/admin/login');
@@ -499,7 +527,25 @@ export default function AdminHomePage() {
       return;
     }
 
+    setOrderFeedback(
+      payload.transitionApplied === false
+        ? 'La acción ya había sido aplicada previamente; se recargó el estado actual.'
+        : 'Orden actualizada correctamente.',
+    );
+
+    if (action === 'reject') {
+      setRejectReasons((current) => ({ ...current, [orderId]: '' }));
+    }
+
+    if (action === 'no-show') {
+      setNoShowReasons((current) => ({ ...current, [orderId]: '' }));
+    }
+
     await loadOrders();
+  }
+
+  async function onOrderAction(orderId: string, action: 'accept' | 'ready' | 'complete') {
+    await submitOrderAction(orderId, action);
   }
 
   async function onRejectOrder(orderId: string) {
@@ -509,27 +555,17 @@ export default function AdminHomePage() {
       return;
     }
 
-    const response = await fetch(`/api/admin/orders/${orderId}/reject`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ reason }),
-    });
-    const payload = await response.json();
+    await submitOrderAction(orderId, 'reject', { reason });
+  }
 
-    if (response.status === 401) {
-      router.push('/admin/login');
+  async function onNoShowOrder(orderId: string) {
+    const reason = noShowReasons[orderId]?.trim();
+    if (!reason) {
+      setOrdersError('Debes ingresar una nota para registrar el no-show.');
       return;
     }
 
-    if (!response.ok) {
-      setOrdersError(payload.error ?? 'No se pudo rechazar la orden.');
-      return;
-    }
-
-    setRejectReasons((current) => ({ ...current, [orderId]: '' }));
-    await loadOrders();
+    await submitOrderAction(orderId, 'no-show', { reason });
   }
 
   return (
@@ -605,65 +641,152 @@ export default function AdminHomePage() {
 
       <section style={{ border: '1px solid #ddd', padding: 16 }}>
         <h2>Órdenes de la sucursal</h2>
+        <label style={{ display: 'inline-grid', gap: 4, marginBottom: 12 }}>
+          <span>Filtrar por estado</span>
+          <select
+            value={orderStatusFilter}
+            onChange={(event) => setOrderStatusFilter(event.target.value as OrderStatusFilter)}
+          >
+            <option value="all">Todas</option>
+            <option value="pending_acceptance">Pendientes</option>
+            <option value="accepted">Aceptadas</option>
+            <option value="rejected">Rechazadas</option>
+            <option value="cancelled_by_customer">Canceladas</option>
+            <option value="ready_for_pickup">Listas</option>
+            <option value="completed">Completadas</option>
+            <option value="no_show">No-show</option>
+          </select>
+        </label>
         {ordersError ? <p>{ordersError}</p> : null}
+        {orderFeedback ? <p>{orderFeedback}</p> : null}
         {orders.length === 0 ? (
           <p>No hay órdenes todavía para esta sucursal.</p>
         ) : (
           <ul style={{ display: 'grid', gap: 16, paddingLeft: 20 }}>
-            {orders.map((order) => (
-              <li key={order.id}>
-                <strong>{getStatusLabel(order.status)}</strong> — {formatClp(order.totalAmount)}
-                <div>Cliente: {order.customerIdentifier}</div>
-                <div>Creada: {formatDateTime(order.placedAt)}</div>
-                <div>Timestamps: aceptación {order.acceptedAt ? formatDateTime(order.acceptedAt) : '—'} / lista {order.readyAt ? formatDateTime(order.readyAt) : '—'}</div>
-                <div>
-                  Items: {order.items.map((item) => `${item.itemNameSnapshot} x${item.quantity}`).join(', ')}
-                </div>
-                {order.rejectionReason ? <div>Motivo rechazo: {order.rejectionReason}</div> : null}
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                  {order.status === 'pending_acceptance' ? (
-                    <>
-                      <button type="button" onClick={() => onOrderAction(order.id, 'accept')}>
-                        Aceptar
-                      </button>
-                      <input
-                        placeholder="Motivo rechazo"
-                        value={rejectReasons[order.id] ?? ''}
-                        onChange={(event) =>
-                          setRejectReasons((current) => ({
-                            ...current,
-                            [order.id]: event.target.value,
-                          }))
-                        }
-                      />
-                      <button type="button" onClick={() => onRejectOrder(order.id)}>
-                        Rechazar
-                      </button>
-                    </>
+            {orders.map((order) => {
+              const pendingAction = orderActionPending[order.id];
+              const noShowReason =
+                order.status === 'no_show'
+                  ? typeof order.lastEvent?.metadataJson?.reason === 'string'
+                    ? order.lastEvent.metadataJson.reason
+                    : null
+                  : null;
+
+              return (
+                <li key={order.id}>
+                  <strong>{getStatusLabel(order.status)}</strong> — {formatClp(order.totalAmount)}
+                  <div>Cliente: {order.customerIdentifier}</div>
+                  <div>Creada: {formatDateTime(order.placedAt)}</div>
+                  <div>Aceptada: {order.acceptedAt ? formatDateTime(order.acceptedAt) : '—'}</div>
+                  <div>Rechazada: {order.rejectedAt ? formatDateTime(order.rejectedAt) : '—'}</div>
+                  <div>Cancelada: {order.cancelledAt ? formatDateTime(order.cancelledAt) : '—'}</div>
+                  <div>Lista: {order.readyAt ? formatDateTime(order.readyAt) : '—'}</div>
+                  <div>Completada: {order.completedAt ? formatDateTime(order.completedAt) : '—'}</div>
+                  <div>No-show: {order.noShowAt ? formatDateTime(order.noShowAt) : '—'}</div>
+                  {order.lastEvent ? (
+                    <div>
+                      Último evento: {order.lastEvent.eventType} · {formatDateTime(order.lastEvent.createdAt)}
+                      {order.lastEvent.actorRole ? ` · ${order.lastEvent.actorRole}` : ''}
+                    </div>
                   ) : null}
-                  {order.status === 'accepted' ? (
-                    <>
-                      <button type="button" onClick={() => onOrderAction(order.id, 'ready')}>
-                        Marcar lista
-                      </button>
-                      <button type="button" onClick={() => onOrderAction(order.id, 'no-show')}>
-                        Marcar no-show
-                      </button>
-                    </>
-                  ) : null}
-                  {order.status === 'ready_for_pickup' ? (
-                    <>
-                      <button type="button" onClick={() => onOrderAction(order.id, 'complete')}>
-                        Completar
-                      </button>
-                      <button type="button" onClick={() => onOrderAction(order.id, 'no-show')}>
-                        Marcar no-show
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              </li>
-            ))}
+                  <div>
+                    Items: {order.items.map((item) => `${item.itemNameSnapshot} x${item.quantity}`).join(', ')}
+                  </div>
+                  {order.rejectionReason ? <div>Motivo rechazo: {order.rejectionReason}</div> : null}
+                  {order.cancellationReason ? <div>Motivo cancelación: {order.cancellationReason}</div> : null}
+                  {noShowReason ? <div>Nota no-show: {noShowReason}</div> : null}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+                    {order.status === 'pending_acceptance' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onOrderAction(order.id, 'accept')}
+                          disabled={Boolean(pendingAction)}
+                        >
+                          {pendingAction === 'accept' ? 'Aceptando…' : 'Aceptar'}
+                        </button>
+                        <input
+                          placeholder="Motivo rechazo"
+                          value={rejectReasons[order.id] ?? ''}
+                          onChange={(event) =>
+                            setRejectReasons((current) => ({
+                              ...current,
+                              [order.id]: event.target.value,
+                            }))
+                          }
+                          disabled={Boolean(pendingAction)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onRejectOrder(order.id)}
+                          disabled={Boolean(pendingAction)}
+                        >
+                          {pendingAction === 'reject' ? 'Rechazando…' : 'Rechazar'}
+                        </button>
+                      </>
+                    ) : null}
+                    {order.status === 'accepted' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onOrderAction(order.id, 'ready')}
+                          disabled={Boolean(pendingAction)}
+                        >
+                          {pendingAction === 'ready' ? 'Actualizando…' : 'Marcar lista'}
+                        </button>
+                        <input
+                          placeholder="Nota no-show"
+                          value={noShowReasons[order.id] ?? ''}
+                          onChange={(event) =>
+                            setNoShowReasons((current) => ({
+                              ...current,
+                              [order.id]: event.target.value,
+                            }))
+                          }
+                          disabled={Boolean(pendingAction)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onNoShowOrder(order.id)}
+                          disabled={Boolean(pendingAction)}
+                        >
+                          {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
+                        </button>
+                      </>
+                    ) : null}
+                    {order.status === 'ready_for_pickup' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onOrderAction(order.id, 'complete')}
+                          disabled={Boolean(pendingAction)}
+                        >
+                          {pendingAction === 'complete' ? 'Completando…' : 'Completar'}
+                        </button>
+                        <input
+                          placeholder="Nota no-show"
+                          value={noShowReasons[order.id] ?? ''}
+                          onChange={(event) =>
+                            setNoShowReasons((current) => ({
+                              ...current,
+                              [order.id]: event.target.value,
+                            }))
+                          }
+                          disabled={Boolean(pendingAction)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onNoShowOrder(order.id)}
+                          disabled={Boolean(pendingAction)}
+                        >
+                          {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
