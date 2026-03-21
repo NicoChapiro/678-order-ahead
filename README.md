@@ -53,6 +53,18 @@ Variables mínimas:
 - `PHONE_AUTH_API_KEY`
 - `INTERNAL_API_SECRET`
 
+## PWA durante estabilización
+
+Para desactivar temporalmente el PWA durante iteración y estabilización, configurar:
+
+- `NEXT_PUBLIC_DISABLE_PWA=true`
+
+Notas:
+
+- Requiere un redeploy limpio después de cambiar esta variable de entorno.
+- Si venías de una versión con PWA habilitado, puede hacer falta limpiar una vez los site data / service worker del navegador para evitar caché vieja.
+- Para re-habilitarlo, quitar la variable o dejarla distinta de `true` y volver a desplegar.
+
 ## Scripts
 
 - `npm run dev`
