@@ -1,7 +1,20 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import {
+  AppShell,
+  CardHeader,
+  EmptyState,
+  InlineFeedback,
+  LoadingBlock,
+  PageHeader,
+  SectionCard,
+  StatGrid,
+  StatItem,
+  StatusChip,
+  SummaryCard,
+} from '@/components/ui/dashboard';
 
 type StoreCode = 'store_1' | 'store_2' | 'store_3';
 
@@ -112,7 +125,15 @@ type AdminOrder = {
 };
 
 type OrderActionName = 'accept' | 'ready' | 'complete' | 'reject' | 'no-show';
-type OrderStatusFilter = 'all' | 'pending_acceptance' | 'accepted' | 'rejected' | 'cancelled_by_customer' | 'ready_for_pickup' | 'completed' | 'no_show';
+type OrderStatusFilter =
+  | 'all'
+  | 'pending_acceptance'
+  | 'accepted'
+  | 'rejected'
+  | 'cancelled_by_customer'
+  | 'ready_for_pickup'
+  | 'completed'
+  | 'no_show';
 
 function formatClp(amount: number) {
   return new Intl.NumberFormat('es-CL', {
@@ -150,6 +171,39 @@ function getStatusLabel(status: string) {
   }
 }
 
+function getStatusTone(status: string) {
+  switch (status) {
+    case 'pending_acceptance':
+      return 'warning';
+    case 'accepted':
+    case 'ready_for_pickup':
+      return 'info';
+    case 'completed':
+    case 'active':
+      return 'success';
+    case 'rejected':
+    case 'cancelled_by_customer':
+    case 'inactive':
+    case 'no_show':
+      return 'danger';
+    default:
+      return 'neutral';
+  }
+}
+
+function getNextActionHint(status: AdminOrder['status']) {
+  switch (status) {
+    case 'pending_acceptance':
+      return 'Siguiente paso recomendado: aceptar o rechazar con motivo.';
+    case 'accepted':
+      return 'Siguiente paso recomendado: marcar lista o registrar no-show si no retira.';
+    case 'ready_for_pickup':
+      return 'Siguiente paso recomendado: completar al entregar o registrar no-show.';
+    default:
+      return 'Esta orden no requiere acción operativa inmediata.';
+  }
+}
+
 export default function AdminHomePage() {
   const router = useRouter();
   const [storeCode, setStoreCode] = useState<StoreCode>('store_1');
@@ -157,7 +211,10 @@ export default function AdminHomePage() {
   const [reasonCode, setReasonCode] = useState('manual_pause');
   const [comment, setComment] = useState('');
   const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [overviewSaving, setOverviewSaving] = useState(false);
   const [menuOverview, setMenuOverview] = useState<MenuOverview | null>(null);
+  const [menuLoading, setMenuLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [menuError, setMenuError] = useState<string | null>(null);
   const [createCode, setCreateCode] = useState('');
@@ -165,26 +222,42 @@ export default function AdminHomePage() {
   const [createDescription, setCreateDescription] = useState('');
   const [attachMenuItemId, setAttachMenuItemId] = useState('');
   const [attachPriceAmount, setAttachPriceAmount] = useState('2500');
+  const [menuActionLoading, setMenuActionLoading] = useState<string | null>(null);
 
   const [walletCustomerKey, setWalletCustomerKey] = useState('demo-wallet-customer');
   const [walletSummary, setWalletSummary] = useState<WalletSummary | null>(null);
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [walletLoading, setWalletLoading] = useState(false);
+  const [walletLookupPending, setWalletLookupPending] = useState(false);
   const [cashTopupAmount, setCashTopupAmount] = useState('5000');
   const [cashTopupNote, setCashTopupNote] = useState('Carga en caja');
+  const [cashTopupPending, setCashTopupPending] = useState(false);
   const [adjustmentDirection, setAdjustmentDirection] = useState<'credit' | 'debit'>('credit');
   const [adjustmentAmount, setAdjustmentAmount] = useState('1000');
   const [adjustmentNote, setAdjustmentNote] = useState('Ajuste operativo');
+  const [adjustmentPending, setAdjustmentPending] = useState(false);
   const [orders, setOrders] = useState<AdminOrder[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [orderFeedback, setOrderFeedback] = useState<string | null>(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatusFilter>('all');
-  const [orderActionPending, setOrderActionPending] = useState<Record<string, OrderActionName | null>>({});
+  const [orderActionPending, setOrderActionPending] = useState<
+    Record<string, OrderActionName | null>
+  >({});
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
   const [noShowReasons, setNoShowReasons] = useState<Record<string, string>>({});
 
+  const actionableOrders = useMemo(
+    () =>
+      orders.filter((order) =>
+        ['pending_acceptance', 'accepted', 'ready_for_pickup'].includes(order.status),
+      ).length,
+    [orders],
+  );
+
   async function loadOverview() {
+    setOverviewLoading(true);
     const response = await fetch(`/api/admin/stores/${storeCode}/order-ahead`, {
       cache: 'no-store',
     });
@@ -197,6 +270,7 @@ export default function AdminHomePage() {
 
     if (!response.ok) {
       setError(payload.error ?? 'Could not load admin overview.');
+      setOverviewLoading(false);
       return;
     }
 
@@ -205,9 +279,11 @@ export default function AdminHomePage() {
     setNewIsEnabled(payload.availability.isOrderAheadEnabled as boolean);
     setReasonCode(payload.availability.disabledReasonCode ?? 'manual_pause');
     setComment(payload.availability.disabledComment ?? '');
+    setOverviewLoading(false);
   }
 
   async function loadMenuOverview() {
+    setMenuLoading(true);
     const response = await fetch(`/api/admin/stores/${storeCode}/menu`, {
       cache: 'no-store',
     });
@@ -220,6 +296,7 @@ export default function AdminHomePage() {
 
     if (!response.ok) {
       setMenuError(payload.error ?? 'Could not load store menu.');
+      setMenuLoading(false);
       return;
     }
 
@@ -228,10 +305,13 @@ export default function AdminHomePage() {
 
     const nextAttachId = (payload.menu as MenuOverview).availableBaseItems[0]?.id ?? '';
     setAttachMenuItemId((current) => current || nextAttachId);
+    setMenuLoading(false);
   }
 
   async function loadOrders() {
-    const statusQuery = orderStatusFilter === 'all' ? '' : `?status=${encodeURIComponent(orderStatusFilter)}`;
+    setOrdersLoading(true);
+    const statusQuery =
+      orderStatusFilter === 'all' ? '' : `?status=${encodeURIComponent(orderStatusFilter)}`;
     const response = await fetch(`/api/admin/stores/${storeCode}/orders${statusQuery}`, {
       cache: 'no-store',
     });
@@ -244,11 +324,13 @@ export default function AdminHomePage() {
 
     if (!response.ok) {
       setOrdersError(payload.error ?? 'Could not load store orders.');
+      setOrdersLoading(false);
       return;
     }
 
     setOrders((payload.orders as AdminOrder[]) ?? []);
     setOrdersError(null);
+    setOrdersLoading(false);
   }
 
   async function loadWalletData(customerKey = walletCustomerKey) {
@@ -309,6 +391,7 @@ export default function AdminHomePage() {
 
   async function onSubmitOrderAhead(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setOverviewSaving(true);
     const response = await fetch(`/api/admin/stores/${storeCode}/order-ahead`, {
       method: 'POST',
       headers: {
@@ -329,14 +412,17 @@ export default function AdminHomePage() {
 
     if (!response.ok) {
       setError(payload.error?.formErrors?.[0] ?? payload.error ?? 'Could not update status.');
+      setOverviewSaving(false);
       return;
     }
 
     await loadOverview();
+    setOverviewSaving(false);
   }
 
   async function onCreateBaseItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setMenuActionLoading('create');
     const response = await fetch('/api/admin/menu-items', {
       method: 'POST',
       headers: {
@@ -357,6 +443,7 @@ export default function AdminHomePage() {
 
     if (!response.ok) {
       setMenuError(payload.error ?? 'Could not create item.');
+      setMenuActionLoading(null);
       return;
     }
 
@@ -364,10 +451,12 @@ export default function AdminHomePage() {
     setCreateName('');
     setCreateDescription('');
     await loadMenuOverview();
+    setMenuActionLoading(null);
   }
 
   async function onAttachItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setMenuActionLoading('attach');
 
     const response = await fetch(`/api/admin/stores/${storeCode}/menu`, {
       method: 'POST',
@@ -391,11 +480,13 @@ export default function AdminHomePage() {
 
     if (!response.ok) {
       setMenuError(payload.error ?? 'Could not attach item.');
+      setMenuActionLoading(null);
       return;
     }
 
     setAttachPriceAmount('2500');
     await loadMenuOverview();
+    setMenuActionLoading(null);
   }
 
   async function onUpdateStoreItem(
@@ -407,6 +498,7 @@ export default function AdminHomePage() {
       sortOrder: number | null;
     },
   ) {
+    setMenuActionLoading(menuItemId);
     const response = await fetch(`/api/admin/stores/${storeCode}/menu/${menuItemId}`, {
       method: 'PATCH',
       headers: {
@@ -426,19 +518,24 @@ export default function AdminHomePage() {
 
     if (!response.ok) {
       setMenuError(payload.error ?? 'Could not update store item.');
+      setMenuActionLoading(null);
       return;
     }
 
     await loadMenuOverview();
+    setMenuActionLoading(null);
   }
 
   async function onLookupWallet(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setWalletLookupPending(true);
     await loadWalletData();
+    setWalletLookupPending(false);
   }
 
   async function onCashTopup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setCashTopupPending(true);
     const response = await fetch(
       `/api/admin/wallets/${encodeURIComponent(walletCustomerKey.trim())}/cash-topup`,
       {
@@ -461,16 +558,19 @@ export default function AdminHomePage() {
 
     if (!response.ok) {
       setWalletError(payload.error ?? 'No se pudo registrar la carga en caja.');
+      setCashTopupPending(false);
       return;
     }
 
     setWalletError(null);
     setCashTopupAmount('5000');
     await loadWalletData();
+    setCashTopupPending(false);
   }
 
   async function onAdjustment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setAdjustmentPending(true);
     const response = await fetch(
       `/api/admin/wallets/${encodeURIComponent(walletCustomerKey.trim())}/adjustment`,
       {
@@ -494,14 +594,20 @@ export default function AdminHomePage() {
 
     if (!response.ok) {
       setWalletError(payload.error ?? 'No se pudo registrar el ajuste.');
+      setAdjustmentPending(false);
       return;
     }
 
     setWalletError(null);
     await loadWalletData();
+    setAdjustmentPending(false);
   }
 
-  async function submitOrderAction(orderId: string, action: OrderActionName, body?: Record<string, unknown>) {
+  async function submitOrderAction(
+    orderId: string,
+    action: OrderActionName,
+    body?: Record<string, unknown>,
+  ) {
     setOrdersError(null);
     setOrderFeedback(null);
     setOrderActionPending((current) => ({ ...current, [orderId]: action }));
@@ -569,399 +675,837 @@ export default function AdminHomePage() {
   }
 
   return (
-    <main style={{ padding: 24, display: 'grid', gap: 24 }}>
-      <header>
-        <h1>Admin</h1>
-        <p>Operación de order-ahead, menú, órdenes y wallet prepaga.</p>
-        <p>
-          Las cargas por caja aceptan owner/barista. Los ajustes admin quedan validados owner-only en backend.
-        </p>
-      </header>
-
-      <section style={{ border: '1px solid #ddd', padding: 16 }}>
-        <h2>Order-ahead</h2>
-        <label htmlFor="store-select">Sucursal</label>{' '}
-        <select
-          id="store-select"
-          value={storeCode}
-          onChange={(event) => setStoreCode(event.target.value as StoreCode)}
-        >
-          <option value="store_1">Store 1</option>
-          <option value="store_2">Store 2</option>
-          <option value="store_3">Store 3</option>
-        </select>
-        {error ? <p>{error}</p> : null}
-        {overview ? (
-          <>
+    <AppShell>
+      <PageHeader>
+        <div className="summary-card__title-row">
+          <div className="stack">
+            <span className="summary-card__eyebrow">Panel operativo</span>
+            <h1>Admin</h1>
             <p>
-              Estado actual: <strong>{overview.availability.isOrderAheadEnabled ? 'Activo' : 'Pausado'}</strong>
+              Operación de order-ahead, menú, órdenes y wallet prepaga con una jerarquía visual más
+              clara para caja y backoffice.
             </p>
-            <form onSubmit={onSubmitOrderAhead} style={{ display: 'grid', gap: 8, maxWidth: 460 }}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={newIsEnabled}
-                  onChange={(event) => setNewIsEnabled(event.target.checked)}
-                />{' '}
-                Habilitar order-ahead
-              </label>
-              {!newIsEnabled ? (
-                <>
-                  <label>
-                    Motivo
-                    <select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>
-                      <option value="manual_pause">Manual pause</option>
-                      <option value="equipment_issue">Equipment issue</option>
-                      <option value="staffing_issue">Staffing issue</option>
-                      <option value="inventory_issue">Inventory issue</option>
-                      <option value="system_issue">System issue</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </label>
-                  <label>
-                    Comentario
-                    <textarea value={comment} onChange={(event) => setComment(event.target.value)} />
-                  </label>
-                </>
-              ) : null}
-              <button type="submit">Guardar estado</button>
-            </form>
-            <h3>Historial reciente</h3>
-            <ul>
-              {overview.recentHistory.map((event) => (
-                <li key={event.id}>
-                  {formatDateTime(event.changedAt)} — {event.newIsEnabled ? 'Activo' : 'Pausado'} por{' '}
-                  {event.changedByRole}
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-      </section>
+          </div>
+          <StatusChip label="Lógica intacta" tone="success" />
+        </div>
+        <p>
+          Las cargas por caja aceptan owner/barista. Los ajustes admin quedan validados owner-only
+          en backend.
+        </p>
+      </PageHeader>
 
-      <section style={{ border: '1px solid #ddd', padding: 16 }}>
-        <h2>Órdenes de la sucursal</h2>
-        <label style={{ display: 'inline-grid', gap: 4, marginBottom: 12 }}>
-          <span>Filtrar por estado</span>
-          <select
-            value={orderStatusFilter}
-            onChange={(event) => setOrderStatusFilter(event.target.value as OrderStatusFilter)}
-          >
-            <option value="all">Todas</option>
-            <option value="pending_acceptance">Pendientes</option>
-            <option value="accepted">Aceptadas</option>
-            <option value="rejected">Rechazadas</option>
-            <option value="cancelled_by_customer">Canceladas</option>
-            <option value="ready_for_pickup">Listas</option>
-            <option value="completed">Completadas</option>
-            <option value="no_show">No-show</option>
-          </select>
-        </label>
-        {ordersError ? <p>{ordersError}</p> : null}
-        {orderFeedback ? <p>{orderFeedback}</p> : null}
-        {orders.length === 0 ? (
-          <p>No hay órdenes todavía para esta sucursal.</p>
-        ) : (
-          <ul style={{ display: 'grid', gap: 16, paddingLeft: 20 }}>
-            {orders.map((order) => {
-              const pendingAction = orderActionPending[order.id];
-              const noShowReason =
-                order.status === 'no_show'
-                  ? typeof order.lastEvent?.metadataJson?.reason === 'string'
-                    ? order.lastEvent.metadataJson.reason
-                    : null
-                  : null;
+      <SummaryCard>
+        <div className="summary-card__title-row">
+          <div className="stack">
+            <span className="summary-card__eyebrow">Control panel</span>
+            <h2>{overview?.availability.storeName ?? 'Sucursal seleccionada'}</h2>
+            <p>
+              Selector de sucursal, estado operativo y órdenes que requieren atención inmediata.
+            </p>
+          </div>
+          <div className="field" style={{ minWidth: 220 }}>
+            <label className="field-label" htmlFor="store-select">
+              Sucursal activa
+            </label>
+            <select
+              id="store-select"
+              value={storeCode}
+              onChange={(event) => setStoreCode(event.target.value as StoreCode)}
+            >
+              <option value="store_1">Store 1</option>
+              <option value="store_2">Store 2</option>
+              <option value="store_3">Store 3</option>
+            </select>
+          </div>
+        </div>
+        <StatGrid>
+          <StatItem
+            label="Order-ahead"
+            value={
+              <StatusChip
+                label={overview?.availability.isOrderAheadEnabled ? 'Activo' : 'Pausado'}
+                tone={overview?.availability.isOrderAheadEnabled ? 'success' : 'danger'}
+              />
+            }
+            helper={
+              overview
+                ? `Actualizado ${formatDateTime(overview.availability.updatedAt)}`
+                : 'Sin datos aún'
+            }
+          />
+          <StatItem
+            label="Órdenes accionables"
+            value={actionableOrders}
+            helper="Pendientes, aceptadas o listas"
+          />
+          <StatItem
+            label="Wallet consultada"
+            value={walletSummary ? formatClp(walletSummary.currentBalance) : '—'}
+            helper={walletSummary?.wallet.customerIdentifier ?? 'Busca una wallet para operar'}
+          />
+        </StatGrid>
+      </SummaryCard>
 
-              return (
-                <li key={order.id}>
-                  <strong>{getStatusLabel(order.status)}</strong> — {formatClp(order.totalAmount)}
-                  <div>Cliente: {order.customerIdentifier}</div>
-                  <div>Creada: {formatDateTime(order.placedAt)}</div>
-                  <div>Aceptada: {order.acceptedAt ? formatDateTime(order.acceptedAt) : '—'}</div>
-                  <div>Rechazada: {order.rejectedAt ? formatDateTime(order.rejectedAt) : '—'}</div>
-                  <div>Cancelada: {order.cancelledAt ? formatDateTime(order.cancelledAt) : '—'}</div>
-                  <div>Lista: {order.readyAt ? formatDateTime(order.readyAt) : '—'}</div>
-                  <div>Completada: {order.completedAt ? formatDateTime(order.completedAt) : '—'}</div>
-                  <div>No-show: {order.noShowAt ? formatDateTime(order.noShowAt) : '—'}</div>
-                  {order.lastEvent ? (
-                    <div>
-                      Último evento: {order.lastEvent.eventType} · {formatDateTime(order.lastEvent.createdAt)}
-                      {order.lastEvent.actorRole ? ` · ${order.lastEvent.actorRole}` : ''}
+      <div className="page-columns">
+        <div className="stack">
+          <SectionCard>
+            <CardHeader>
+              <div className="stack">
+                <h2>Order-ahead</h2>
+                <p>
+                  Haz visible el estado actual, previene errores y deja evidencia del motivo cuando
+                  pausas la tienda.
+                </p>
+              </div>
+            </CardHeader>
+            {error ? <InlineFeedback tone="error" message={error} /> : null}
+            {overviewLoading ? (
+              <LoadingBlock label="Cargando disponibilidad y bitácora…" />
+            ) : overview ? (
+              <>
+                <div className="surface-soft stack">
+                  <div className="toolbar">
+                    <div className="stack" style={{ gap: '0.35rem' }}>
+                      <span className="kicker">Estado actual</span>
+                      <div className="chip-row">
+                        <StatusChip
+                          label={overview.availability.isOrderAheadEnabled ? 'Activo' : 'Inactivo'}
+                          tone={getStatusTone(
+                            overview.availability.isOrderAheadEnabled ? 'active' : 'inactive',
+                          )}
+                        />
+                        {!overview.availability.isOrderAheadEnabled &&
+                        overview.availability.disabledReasonCode ? (
+                          <StatusChip
+                            label={overview.availability.disabledReasonCode}
+                            tone="muted"
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="meta-block">
+                      <span className="row-label">Última actualización</span>
+                      <strong>{formatDateTime(overview.availability.updatedAt)}</strong>
+                    </div>
+                  </div>
+                  {!overview.availability.isOrderAheadEnabled &&
+                  overview.availability.disabledComment ? (
+                    <p>{overview.availability.disabledComment}</p>
+                  ) : null}
+                </div>
+
+                <form onSubmit={onSubmitOrderAhead} className="form-grid">
+                  <label className="toggle-row surface-soft" htmlFor="order-ahead-enabled">
+                    <input
+                      id="order-ahead-enabled"
+                      type="checkbox"
+                      checked={newIsEnabled}
+                      onChange={(event) => setNewIsEnabled(event.target.checked)}
+                    />
+                    <div className="stack" style={{ gap: '0.2rem' }}>
+                      <strong>Habilitar order-ahead</strong>
+                      <span className="field-help">
+                        Si se desactiva, el motivo y comentario quedan visibles para dar contexto
+                        operativo.
+                      </span>
+                    </div>
+                  </label>
+
+                  {!newIsEnabled ? (
+                    <div className="form-grid form-grid--two">
+                      <label className="field">
+                        <span className="field-label">Motivo de pausa</span>
+                        <select
+                          value={reasonCode}
+                          onChange={(event) => setReasonCode(event.target.value)}
+                        >
+                          <option value="manual_pause">Manual pause</option>
+                          <option value="equipment_issue">Equipment issue</option>
+                          <option value="staffing_issue">Staffing issue</option>
+                          <option value="inventory_issue">Inventory issue</option>
+                          <option value="system_issue">System issue</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Comentario interno/visible</span>
+                        <textarea
+                          value={comment}
+                          onChange={(event) => setComment(event.target.value)}
+                        />
+                      </label>
                     </div>
                   ) : null}
-                  <div>
-                    Items: {order.items.map((item) => `${item.itemNameSnapshot} x${item.quantity}`).join(', ')}
-                  </div>
-                  {order.rejectionReason ? <div>Motivo rechazo: {order.rejectionReason}</div> : null}
-                  {order.cancellationReason ? <div>Motivo cancelación: {order.cancellationReason}</div> : null}
-                  {noShowReason ? <div>Nota no-show: {noShowReason}</div> : null}
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
-                    {order.status === 'pending_acceptance' ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => onOrderAction(order.id, 'accept')}
-                          disabled={Boolean(pendingAction)}
-                        >
-                          {pendingAction === 'accept' ? 'Aceptando…' : 'Aceptar'}
-                        </button>
-                        <input
-                          placeholder="Motivo rechazo"
-                          value={rejectReasons[order.id] ?? ''}
-                          onChange={(event) =>
-                            setRejectReasons((current) => ({
-                              ...current,
-                              [order.id]: event.target.value,
-                            }))
-                          }
-                          disabled={Boolean(pendingAction)}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => onRejectOrder(order.id)}
-                          disabled={Boolean(pendingAction)}
-                        >
-                          {pendingAction === 'reject' ? 'Rechazando…' : 'Rechazar'}
-                        </button>
-                      </>
-                    ) : null}
-                    {order.status === 'accepted' ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => onOrderAction(order.id, 'ready')}
-                          disabled={Boolean(pendingAction)}
-                        >
-                          {pendingAction === 'ready' ? 'Actualizando…' : 'Marcar lista'}
-                        </button>
-                        <input
-                          placeholder="Nota no-show"
-                          value={noShowReasons[order.id] ?? ''}
-                          onChange={(event) =>
-                            setNoShowReasons((current) => ({
-                              ...current,
-                              [order.id]: event.target.value,
-                            }))
-                          }
-                          disabled={Boolean(pendingAction)}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => onNoShowOrder(order.id)}
-                          disabled={Boolean(pendingAction)}
-                        >
-                          {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
-                        </button>
-                      </>
-                    ) : null}
-                    {order.status === 'ready_for_pickup' ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => onOrderAction(order.id, 'complete')}
-                          disabled={Boolean(pendingAction)}
-                        >
-                          {pendingAction === 'complete' ? 'Completando…' : 'Completar'}
-                        </button>
-                        <input
-                          placeholder="Nota no-show"
-                          value={noShowReasons[order.id] ?? ''}
-                          onChange={(event) =>
-                            setNoShowReasons((current) => ({
-                              ...current,
-                              [order.id]: event.target.value,
-                            }))
-                          }
-                          disabled={Boolean(pendingAction)}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => onNoShowOrder(order.id)}
-                          disabled={Boolean(pendingAction)}
-                        >
-                          {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
 
-      <section style={{ border: '1px solid #ddd', padding: 16 }}>
-        <h2>Menú</h2>
-        {menuError ? <p>{menuError}</p> : null}
-        <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-          <form onSubmit={onCreateBaseItem} style={{ display: 'grid', gap: 8 }}>
-            <h3>Crear producto base</h3>
-            <input
-              placeholder="code"
-              value={createCode}
-              onChange={(event) => setCreateCode(event.target.value)}
-            />
-            <input
-              placeholder="name"
-              value={createName}
-              onChange={(event) => setCreateName(event.target.value)}
-            />
-            <textarea
-              placeholder="description"
-              value={createDescription}
-              onChange={(event) => setCreateDescription(event.target.value)}
-            />
-            <button type="submit">Crear producto</button>
-          </form>
+                  <div className="inline-actions">
+                    <button
+                      className="button button--primary"
+                      type="submit"
+                      disabled={overviewSaving}
+                    >
+                      {overviewSaving ? 'Guardando…' : 'Guardar estado operativo'}
+                    </button>
+                    <span className="field-help">
+                      Evita cambios accidentales revisando motivo y comentario antes de pausar.
+                    </span>
+                  </div>
+                </form>
 
-          <form onSubmit={onAttachItem} style={{ display: 'grid', gap: 8 }}>
-            <h3>Adjuntar a sucursal</h3>
-            <select value={attachMenuItemId} onChange={(event) => setAttachMenuItemId(event.target.value)}>
-              {menuOverview?.availableBaseItems.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              min={1}
-              value={attachPriceAmount}
-              onChange={(event) => setAttachPriceAmount(event.target.value)}
-            />
-            <button type="submit">Adjuntar producto</button>
-          </form>
+                <div className="stack">
+                  <h3>Historial reciente</h3>
+                  {overview.recentHistory.length === 0 ? (
+                    <EmptyState
+                      title="Sin cambios recientes"
+                      description="Cuando la disponibilidad cambie, el historial mostrará actor, estado y fecha para auditoría rápida."
+                    />
+                  ) : (
+                    <div className="list-grid">
+                      {overview.recentHistory.map((event) => (
+                        <div key={event.id} className="transaction-row">
+                          <div className="stack" style={{ gap: '0.35rem' }}>
+                            <div className="chip-row">
+                              <StatusChip
+                                label={event.newIsEnabled ? 'Activo' : 'Pausado'}
+                                tone={event.newIsEnabled ? 'success' : 'danger'}
+                              />
+                              {event.reasonCode ? (
+                                <StatusChip label={event.reasonCode} tone="muted" />
+                              ) : null}
+                            </div>
+                            <strong>{formatDateTime(event.changedAt)}</strong>
+                            <span className="meta-text">{event.changedByRole}</span>
+                          </div>
+                          <div className="stack" style={{ gap: '0.35rem', maxWidth: 360 }}>
+                            <span className="row-label">Comentario</span>
+                            <span>{event.comment || 'Sin comentario adicional.'}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <EmptyState
+                title="Sin overview disponible"
+                description="No fue posible cargar el estado actual de la sucursal."
+              />
+            )}
+          </SectionCard>
+
+          <SectionCard>
+            <CardHeader>
+              <div className="stack">
+                <h2>Órdenes de la sucursal</h2>
+                <p>
+                  Cada orden destaca estado actual, siguiente acción válida, montos y evidencias del
+                  flujo.
+                </p>
+              </div>
+              <div className="field" style={{ minWidth: 220 }}>
+                <label className="field-label" htmlFor="order-filter">
+                  Filtro por estado
+                </label>
+                <select
+                  id="order-filter"
+                  value={orderStatusFilter}
+                  onChange={(event) =>
+                    setOrderStatusFilter(event.target.value as OrderStatusFilter)
+                  }
+                >
+                  <option value="all">Todas</option>
+                  <option value="pending_acceptance">Pendientes</option>
+                  <option value="accepted">Aceptadas</option>
+                  <option value="rejected">Rechazadas</option>
+                  <option value="cancelled_by_customer">Canceladas</option>
+                  <option value="ready_for_pickup">Listas</option>
+                  <option value="completed">Completadas</option>
+                  <option value="no_show">No-show</option>
+                </select>
+              </div>
+            </CardHeader>
+            {ordersError ? <InlineFeedback tone="error" message={ordersError} /> : null}
+            {orderFeedback ? <InlineFeedback tone="success" message={orderFeedback} /> : null}
+            {ordersLoading ? (
+              <LoadingBlock label="Cargando órdenes de la sucursal…" />
+            ) : orders.length === 0 ? (
+              <EmptyState
+                title="No hay órdenes para esta vista"
+                description="Prueba otro filtro o espera nuevas compras para ver actividad aquí."
+              />
+            ) : (
+              <div className="list-grid">
+                {orders.map((order) => {
+                  const pendingAction = orderActionPending[order.id];
+                  const noShowReason =
+                    order.status === 'no_show'
+                      ? typeof order.lastEvent?.metadataJson?.reason === 'string'
+                        ? order.lastEvent.metadataJson.reason
+                        : null
+                      : null;
+
+                  return (
+                    <article key={order.id} className="order-card">
+                      <div className="order-card__header">
+                        <div className="stack" style={{ gap: '0.4rem' }}>
+                          <div className="chip-row">
+                            <StatusChip
+                              label={getStatusLabel(order.status)}
+                              tone={getStatusTone(order.status)}
+                            />
+                            <StatusChip label={order.storeName} tone="muted" />
+                          </div>
+                          <strong>{formatClp(order.totalAmount)}</strong>
+                          <span className="meta-text">Orden {order.id}</span>
+                        </div>
+                        <div className="stack" style={{ gap: '0.3rem', maxWidth: 320 }}>
+                          <span className="row-label">Cliente</span>
+                          <strong>{order.customerIdentifier}</strong>
+                          <span className="field-help">{getNextActionHint(order.status)}</span>
+                        </div>
+                      </div>
+
+                      <div className="order-card__metrics">
+                        <div className="meta-block">
+                          <span className="row-label">Creada</span>
+                          <strong>{formatDateTime(order.placedAt)}</strong>
+                        </div>
+                        <div className="meta-block">
+                          <span className="row-label">Aceptada</span>
+                          <strong>
+                            {order.acceptedAt ? formatDateTime(order.acceptedAt) : '—'}
+                          </strong>
+                        </div>
+                        <div className="meta-block">
+                          <span className="row-label">Lista</span>
+                          <strong>{order.readyAt ? formatDateTime(order.readyAt) : '—'}</strong>
+                        </div>
+                        <div className="meta-block">
+                          <span className="row-label">Completada</span>
+                          <strong>
+                            {order.completedAt ? formatDateTime(order.completedAt) : '—'}
+                          </strong>
+                        </div>
+                      </div>
+
+                      <div className="surface-soft stack">
+                        <div className="order-items">
+                          {order.items.map((item) => (
+                            <div key={item.id} className="order-item-row">
+                              <span>{item.itemNameSnapshot}</span>
+                              <strong>x{item.quantity}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        {order.lastEvent ? (
+                          <div className="meta-text">
+                            Último evento: {order.lastEvent.eventType} ·{' '}
+                            {formatDateTime(order.lastEvent.createdAt)}
+                            {order.lastEvent.actorRole ? ` · ${order.lastEvent.actorRole}` : ''}
+                          </div>
+                        ) : null}
+                        {order.rejectionReason ? (
+                          <InlineFeedback
+                            tone="warning"
+                            message={`Motivo rechazo: ${order.rejectionReason}`}
+                          />
+                        ) : null}
+                        {order.cancellationReason ? (
+                          <InlineFeedback
+                            tone="warning"
+                            message={`Motivo cancelación: ${order.cancellationReason}`}
+                          />
+                        ) : null}
+                        {noShowReason ? (
+                          <InlineFeedback
+                            tone="warning"
+                            message={`Nota no-show: ${noShowReason}`}
+                          />
+                        ) : null}
+                      </div>
+
+                      <div className="stack">
+                        {order.status === 'pending_acceptance' ? (
+                          <div className="form-grid form-row--inline">
+                            <button
+                              className="button button--primary"
+                              type="button"
+                              onClick={() => onOrderAction(order.id, 'accept')}
+                              disabled={Boolean(pendingAction)}
+                            >
+                              {pendingAction === 'accept' ? 'Aceptando…' : 'Aceptar orden'}
+                            </button>
+                            <label className="field">
+                              <span className="field-label">Motivo de rechazo</span>
+                              <input
+                                placeholder="Explica por qué no puede prepararse"
+                                value={rejectReasons[order.id] ?? ''}
+                                onChange={(event) =>
+                                  setRejectReasons((current) => ({
+                                    ...current,
+                                    [order.id]: event.target.value,
+                                  }))
+                                }
+                                disabled={Boolean(pendingAction)}
+                              />
+                            </label>
+                            <button
+                              className="button button--soft-danger"
+                              type="button"
+                              onClick={() => onRejectOrder(order.id)}
+                              disabled={Boolean(pendingAction)}
+                            >
+                              {pendingAction === 'reject' ? 'Rechazando…' : 'Rechazar'}
+                            </button>
+                          </div>
+                        ) : null}
+
+                        {order.status === 'accepted' ? (
+                          <div className="form-grid form-row--inline">
+                            <button
+                              className="button button--primary"
+                              type="button"
+                              onClick={() => onOrderAction(order.id, 'ready')}
+                              disabled={Boolean(pendingAction)}
+                            >
+                              {pendingAction === 'ready' ? 'Actualizando…' : 'Marcar lista'}
+                            </button>
+                            <label className="field">
+                              <span className="field-label">Nota de no-show</span>
+                              <input
+                                placeholder="Registra contexto si no retira"
+                                value={noShowReasons[order.id] ?? ''}
+                                onChange={(event) =>
+                                  setNoShowReasons((current) => ({
+                                    ...current,
+                                    [order.id]: event.target.value,
+                                  }))
+                                }
+                                disabled={Boolean(pendingAction)}
+                              />
+                            </label>
+                            <button
+                              className="button button--soft-danger"
+                              type="button"
+                              onClick={() => onNoShowOrder(order.id)}
+                              disabled={Boolean(pendingAction)}
+                            >
+                              {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
+                            </button>
+                          </div>
+                        ) : null}
+
+                        {order.status === 'ready_for_pickup' ? (
+                          <div className="form-grid form-row--inline">
+                            <button
+                              className="button button--primary"
+                              type="button"
+                              onClick={() => onOrderAction(order.id, 'complete')}
+                              disabled={Boolean(pendingAction)}
+                            >
+                              {pendingAction === 'complete' ? 'Completando…' : 'Completar entrega'}
+                            </button>
+                            <label className="field">
+                              <span className="field-label">Nota de no-show</span>
+                              <input
+                                placeholder="Usa esta nota si el cliente no se presenta"
+                                value={noShowReasons[order.id] ?? ''}
+                                onChange={(event) =>
+                                  setNoShowReasons((current) => ({
+                                    ...current,
+                                    [order.id]: event.target.value,
+                                  }))
+                                }
+                                disabled={Boolean(pendingAction)}
+                              />
+                            </label>
+                            <button
+                              className="button button--soft-danger"
+                              type="button"
+                              onClick={() => onNoShowOrder(order.id)}
+                              disabled={Boolean(pendingAction)}
+                            >
+                              {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </SectionCard>
+
+          <SectionCard>
+            <CardHeader>
+              <div className="stack">
+                <h2>Menú</h2>
+                <p>
+                  Configura productos con bloques más claros para creación, attach y visibilidad por
+                  sucursal.
+                </p>
+              </div>
+            </CardHeader>
+            {menuError ? <InlineFeedback tone="error" message={menuError} /> : null}
+            {menuLoading ? (
+              <LoadingBlock label="Cargando configuración del menú…" />
+            ) : (
+              <>
+                <div className="section-grid">
+                  <form
+                    onSubmit={onCreateBaseItem}
+                    className="section-card"
+                    style={{ padding: '1.1rem' }}
+                  >
+                    <div className="stack">
+                      <h3>Crear producto base</h3>
+                      <p className="helper-text">
+                        Define el producto reusable una sola vez antes de asignarlo a sucursales.
+                      </p>
+                    </div>
+                    <label className="field">
+                      <span className="field-label">Code</span>
+                      <input
+                        value={createCode}
+                        onChange={(event) => setCreateCode(event.target.value)}
+                        placeholder="latte_12oz"
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">Nombre</span>
+                      <input
+                        value={createName}
+                        onChange={(event) => setCreateName(event.target.value)}
+                        placeholder="Latte"
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">Descripción</span>
+                      <textarea
+                        value={createDescription}
+                        onChange={(event) => setCreateDescription(event.target.value)}
+                        placeholder="Notas breves para equipo y cliente"
+                      />
+                    </label>
+                    <button
+                      className="button button--primary"
+                      type="submit"
+                      disabled={menuActionLoading === 'create'}
+                    >
+                      {menuActionLoading === 'create' ? 'Creando…' : 'Crear producto'}
+                    </button>
+                  </form>
+
+                  <form
+                    onSubmit={onAttachItem}
+                    className="section-card"
+                    style={{ padding: '1.1rem' }}
+                  >
+                    <div className="stack">
+                      <h3>Adjuntar a sucursal</h3>
+                      <p className="helper-text">
+                        Convierte un producto base en una opción vendible dentro de la tienda
+                        activa.
+                      </p>
+                    </div>
+                    <label className="field">
+                      <span className="field-label">Producto base</span>
+                      <select
+                        value={attachMenuItemId}
+                        onChange={(event) => setAttachMenuItemId(event.target.value)}
+                      >
+                        {menuOverview?.availableBaseItems.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="field-label">Precio CLP</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={attachPriceAmount}
+                        onChange={(event) => setAttachPriceAmount(event.target.value)}
+                      />
+                    </label>
+                    <button
+                      className="button button--primary"
+                      type="submit"
+                      disabled={menuActionLoading === 'attach'}
+                    >
+                      {menuActionLoading === 'attach' ? 'Adjuntando…' : 'Adjuntar producto'}
+                    </button>
+                  </form>
+                </div>
+
+                <div className="stack">
+                  <h3>Configuración actual</h3>
+                  {menuOverview?.configuredItems.length ? (
+                    <div className="list-grid">
+                      {menuOverview.configuredItems.map((item) => {
+                        const pending = menuActionLoading === item.menuItemId;
+                        return (
+                          <article key={item.storeMenuItemId} className="menu-item-card">
+                            <div className="menu-item-card__header">
+                              <div className="stack" style={{ gap: '0.35rem' }}>
+                                <strong>{item.name}</strong>
+                                <span className="meta-text">{item.code}</span>
+                                {item.description ? (
+                                  <span className="meta-text">{item.description}</span>
+                                ) : null}
+                              </div>
+                              <div
+                                className="stack"
+                                style={{ gap: '0.35rem', alignItems: 'flex-end' }}
+                              >
+                                <strong>{formatClp(item.priceAmount)}</strong>
+                                <div className="chip-row">
+                                  <StatusChip
+                                    label={item.isVisible ? 'Activo' : 'Oculto'}
+                                    tone={item.isVisible ? 'success' : 'muted'}
+                                  />
+                                  <StatusChip
+                                    label={item.isInStock ? 'En stock' : 'Sin stock'}
+                                    tone={item.isInStock ? 'info' : 'warning'}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="inline-actions">
+                              <button
+                                className="button button--secondary"
+                                type="button"
+                                onClick={() =>
+                                  onUpdateStoreItem(item.menuItemId, {
+                                    priceAmount: item.priceAmount,
+                                    isVisible: !item.isVisible,
+                                    isInStock: item.isInStock,
+                                    sortOrder: item.sortOrder,
+                                  })
+                                }
+                                disabled={pending}
+                              >
+                                {pending
+                                  ? 'Actualizando…'
+                                  : item.isVisible
+                                    ? 'Ocultar producto'
+                                    : 'Mostrar producto'}
+                              </button>
+                              <button
+                                className="button button--ghost"
+                                type="button"
+                                onClick={() =>
+                                  onUpdateStoreItem(item.menuItemId, {
+                                    priceAmount: item.priceAmount,
+                                    isVisible: item.isVisible,
+                                    isInStock: !item.isInStock,
+                                    sortOrder: item.sortOrder,
+                                  })
+                                }
+                                disabled={pending}
+                              >
+                                {item.isInStock ? 'Marcar sin stock' : 'Marcar con stock'}
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      title="Sin productos configurados"
+                      description="Primero crea o adjunta un producto para que esta sucursal pueda venderlo."
+                    />
+                  )}
+                </div>
+              </>
+            )}
+          </SectionCard>
         </div>
 
-        <h3>Configuración actual</h3>
-        <ul style={{ display: 'grid', gap: 12, paddingLeft: 20 }}>
-          {menuOverview?.configuredItems.map((item) => (
-            <li key={item.storeMenuItemId}>
-              <strong>{item.name}</strong> — {formatClp(item.priceAmount)}{' '}
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdateStoreItem(item.menuItemId, {
-                    priceAmount: item.priceAmount,
-                    isVisible: !item.isVisible,
-                    isInStock: item.isInStock,
-                    sortOrder: item.sortOrder,
-                  })
-                }
-              >
-                {item.isVisible ? 'Ocultar' : 'Mostrar'}
-              </button>{' '}
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdateStoreItem(item.menuItemId, {
-                    priceAmount: item.priceAmount,
-                    isVisible: item.isVisible,
-                    isInStock: !item.isInStock,
-                    sortOrder: item.sortOrder,
-                  })
-                }
-              >
-                {item.isInStock ? 'Marcar sin stock' : 'Marcar con stock'}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section style={{ border: '1px solid #ddd', padding: 16 }}>
-        <h2>Wallet prepaga</h2>
-        <p>
-          Customer key demo sugerida: <code>demo-wallet-customer</code>
-        </p>
-        <form onSubmit={onLookupWallet} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input
-            aria-label="Customer key"
-            value={walletCustomerKey}
-            onChange={(event) => setWalletCustomerKey(event.target.value)}
-            placeholder="customer key"
-          />
-          <button type="submit">Buscar wallet</button>
-        </form>
-        {walletError ? <p>{walletError}</p> : null}
-        {walletSummary ? (
-          <div style={{ marginTop: 16, display: 'grid', gap: 16 }}>
-            <div>
+        <div className="stack">
+          <SectionCard>
+            <CardHeader>
+              <div className="stack">
+                <h2>Wallet prepaga</h2>
+                <p>
+                  Cash top-up y ajustes con lenguaje compartido, mejor separación y estados
+                  visibles.
+                </p>
+              </div>
+            </CardHeader>
+            <div className="surface-soft stack">
               <p>
-                Wallet: <strong>{walletSummary.wallet.customerIdentifier}</strong>
+                Customer key demo sugerida: <code>demo-wallet-customer</code>
               </p>
-              <p>
-                Balance actual: <strong>{formatClp(walletSummary.currentBalance)}</strong>
-              </p>
-              <p>Moneda: {walletSummary.wallet.currencyCode}</p>
-            </div>
-
-            <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-              <form onSubmit={onCashTopup} style={{ display: 'grid', gap: 8 }}>
-                <h3>Top-up por caja</h3>
-                <input
-                  type="number"
-                  min={1}
-                  value={cashTopupAmount}
-                  onChange={(event) => setCashTopupAmount(event.target.value)}
-                />
-                <input
-                  value={cashTopupNote}
-                  onChange={(event) => setCashTopupNote(event.target.value)}
-                  placeholder="Nota"
-                />
-                <button type="submit">Registrar carga inmediata</button>
-              </form>
-
-              <form onSubmit={onAdjustment} style={{ display: 'grid', gap: 8 }}>
-                <h3>Ajuste admin</h3>
-                <select
-                  value={adjustmentDirection}
-                  onChange={(event) => setAdjustmentDirection(event.target.value as 'credit' | 'debit')}
+              <form onSubmit={onLookupWallet} className="form-row form-row--inline">
+                <label className="field">
+                  <span className="field-label">Customer key</span>
+                  <input
+                    aria-label="Customer key"
+                    value={walletCustomerKey}
+                    onChange={(event) => setWalletCustomerKey(event.target.value)}
+                    placeholder="customer key"
+                  />
+                </label>
+                <button
+                  className="button button--primary"
+                  type="submit"
+                  disabled={walletLookupPending}
                 >
-                  <option value="credit">Crédito</option>
-                  <option value="debit">Débito</option>
-                </select>
-                <input
-                  type="number"
-                  min={1}
-                  value={adjustmentAmount}
-                  onChange={(event) => setAdjustmentAmount(event.target.value)}
-                />
-                <textarea
-                  value={adjustmentNote}
-                  onChange={(event) => setAdjustmentNote(event.target.value)}
-                  placeholder="Motivo obligatorio"
-                />
-                <button type="submit">Registrar ajuste</button>
+                  {walletLookupPending ? 'Buscando…' : 'Buscar wallet'}
+                </button>
               </form>
             </div>
 
-            <div>
-              <h3>Transacciones</h3>
-              {walletLoading ? <p>Cargando…</p> : null}
-              {walletTransactions.length === 0 ? (
-                <p>Sin movimientos todavía.</p>
-              ) : (
-                <ul style={{ display: 'grid', gap: 12, paddingLeft: 20 }}>
-                  {walletTransactions.map((transaction) => (
-                    <li key={transaction.id}>
-                      <strong>{transaction.entryType}</strong> — {formatClp(transaction.amountSigned)} —{' '}
-                      {transaction.status} — {formatDateTime(transaction.createdAt)}
-                      <div>
-                        Actor: {transaction.createdByRole ?? 'n/a'} / Ref: {transaction.referenceType ?? 'n/a'}{' '}
-                        {transaction.referenceId ?? '—'}
-                      </div>
-                      {transaction.note ? <div>Nota: {transaction.note}</div> : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        ) : null}
-      </section>
-    </main>
+            {walletError ? <InlineFeedback tone="error" message={walletError} /> : null}
+            {walletLoading ? <LoadingBlock label="Cargando wallet y movimientos…" /> : null}
+            {walletSummary ? (
+              <>
+                <StatGrid>
+                  <StatItem label="Wallet" value={walletSummary.wallet.customerIdentifier} />
+                  <StatItem
+                    label="Balance actual"
+                    value={formatClp(walletSummary.currentBalance)}
+                  />
+                  <StatItem label="Moneda" value={walletSummary.wallet.currencyCode} />
+                </StatGrid>
+
+                <div className="stack">
+                  <div className="section-card" style={{ padding: '1rem' }}>
+                    <div className="stack">
+                      <h3>Top-up por caja</h3>
+                      <p className="helper-text">
+                        Acción primaria para una carga inmediata validada por backend según rol.
+                      </p>
+                    </div>
+                    <form onSubmit={onCashTopup} className="form-grid">
+                      <label className="field">
+                        <span className="field-label">Monto</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={cashTopupAmount}
+                          onChange={(event) => setCashTopupAmount(event.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Nota</span>
+                        <input
+                          value={cashTopupNote}
+                          onChange={(event) => setCashTopupNote(event.target.value)}
+                          placeholder="Detalle para caja"
+                        />
+                      </label>
+                      <button
+                        className="button button--primary button--block"
+                        type="submit"
+                        disabled={cashTopupPending}
+                      >
+                        {cashTopupPending ? 'Registrando…' : 'Registrar carga inmediata'}
+                      </button>
+                    </form>
+                  </div>
+
+                  <div className="section-card" style={{ padding: '1rem' }}>
+                    <div className="stack">
+                      <h3>Ajuste admin</h3>
+                      <p className="helper-text">
+                        Acción sensible con motivo obligatorio para dejar trazabilidad operativa.
+                      </p>
+                    </div>
+                    <form onSubmit={onAdjustment} className="form-grid">
+                      <label className="field">
+                        <span className="field-label">Dirección</span>
+                        <select
+                          value={adjustmentDirection}
+                          onChange={(event) =>
+                            setAdjustmentDirection(event.target.value as 'credit' | 'debit')
+                          }
+                        >
+                          <option value="credit">Crédito</option>
+                          <option value="debit">Débito</option>
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Monto</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={adjustmentAmount}
+                          onChange={(event) => setAdjustmentAmount(event.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Motivo</span>
+                        <textarea
+                          value={adjustmentNote}
+                          onChange={(event) => setAdjustmentNote(event.target.value)}
+                          placeholder="Motivo obligatorio"
+                        />
+                      </label>
+                      <button
+                        className="button button--danger button--block"
+                        type="submit"
+                        disabled={adjustmentPending}
+                      >
+                        {adjustmentPending ? 'Registrando…' : 'Registrar ajuste'}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+
+                <div className="stack">
+                  <h3>Transacciones</h3>
+                  {walletTransactions.length === 0 ? (
+                    <EmptyState
+                      title="Sin movimientos todavía"
+                      description="Cuando existan top-ups, órdenes o ajustes, aparecerán aquí con actor, referencia y nota."
+                    />
+                  ) : (
+                    <div className="list-grid">
+                      {walletTransactions.map((transaction) => (
+                        <div key={transaction.id} className="transaction-row">
+                          <div className="stack" style={{ gap: '0.35rem' }}>
+                            <div className="chip-row">
+                              <StatusChip label={transaction.entryType} tone="muted" />
+                              <StatusChip
+                                label={transaction.status}
+                                tone={getStatusTone(transaction.status)}
+                              />
+                            </div>
+                            <strong>{formatClp(transaction.amountSigned)}</strong>
+                            <span className="meta-text">
+                              {formatDateTime(transaction.createdAt)}
+                            </span>
+                          </div>
+                          <div className="stack" style={{ gap: '0.35rem', maxWidth: 320 }}>
+                            <span className="meta-text">
+                              Actor: {transaction.createdByRole ?? 'n/a'} · Ref:{' '}
+                              {transaction.referenceType ?? 'n/a'} {transaction.referenceId ?? '—'}
+                            </span>
+                            {transaction.note ? <span>{transaction.note}</span> : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              !walletLoading && (
+                <EmptyState
+                  title="Busca una wallet para operar"
+                  description="Ingresa una customer key para revisar balance, cargar saldo o aplicar ajustes."
+                />
+              )
+            )}
+          </SectionCard>
+        </div>
+      </div>
+    </AppShell>
   );
 }
