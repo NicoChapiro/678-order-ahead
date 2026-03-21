@@ -8,7 +8,7 @@ export type BootstrapOwnerResult =
   | { created: true }
   | {
       created: false;
-      reason: 'already_exists' | 'missing_env';
+      reason: 'owner_exists' | 'missing_env';
     };
 
 export async function bootstrapOwnerIfNeeded(): Promise<BootstrapOwnerResult> {
@@ -19,7 +19,7 @@ export async function bootstrapOwnerIfNeeded(): Promise<BootstrapOwnerResult> {
     .limit(1);
 
   if (owner[0]) {
-    return { created: false, reason: 'already_exists' };
+    return { created: false, reason: 'owner_exists' };
   }
 
   const env = getBootstrapEnv();
