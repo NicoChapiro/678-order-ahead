@@ -1,7 +1,9 @@
 import withPWA from 'next-pwa';
 import type { NextConfig } from 'next';
 
-const isDev = process.env.NODE_ENV === 'development';
+const disablePwa =
+  process.env.NODE_ENV === 'development' ||
+  process.env.NEXT_PUBLIC_DISABLE_PWA === 'true';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -10,7 +12,7 @@ const nextConfig: NextConfig = {
 
 export default withPWA({
   dest: 'public',
-  disable: isDev,
+  disable: disablePwa,
   register: true,
   skipWaiting: true,
 })(nextConfig);
