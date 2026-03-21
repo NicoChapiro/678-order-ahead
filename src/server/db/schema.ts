@@ -179,6 +179,83 @@ export const storeMenuItems = pgTable(
 );
 
 
+
+export const orderStatusEnum = pgEnum('order_status', [
+  'pending_acceptance',
+  'accepted',
+  'rejected',
+  'cancelled_by_customer',
+  'ready_for_pickup',
+  'completed',
+  'no_show',
+]);
+
+export const orders = pgTable(
+  'orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    customerIdentifier: varchar('customer_identifier', { length: 120 }).notNull(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'restrict' }),
+    status: orderStatusEnum('status').default('pending_acceptance').notNull(),
+    currencyCode: varchar('currency_code', { length: 3 }).default('CLP').notNull(),
+    totalAmount: integer('total_amount').notNull(),
+    placedAt: timestamp('placed_at', { withTimezone: true }).defaultNow().notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    rejectedAt: timestamp('rejected_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    readyAt: timestamp('ready_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    noShowAt: timestamp('no_show_at', { withTimezone: true }),
+    rejectionReason: text('rejection_reason'),
+    cancellationReason: text('cancellation_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    storeIdIdx: index('orders_store_id_idx').on(table.storeId),
+    customerIdentifierIdx: index('orders_customer_identifier_idx').on(table.customerIdentifier),
+    createdAtIdx: index('orders_created_at_idx').on(table.createdAt),
+  }),
+);
+
+export const orderItems = pgTable(
+  'order_items',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    menuItemId: uuid('menu_item_id')
+      .notNull()
+      .references(() => menuItems.id, { onDelete: 'restrict' }),
+    storeMenuItemId: uuid('store_menu_item_id')
+      .notNull()
+      .references(() => storeMenuItems.id, { onDelete: 'restrict' }),
+    itemNameSnapshot: varchar('item_name_snapshot', { length: 120 }).notNull(),
+    unitPriceAmount: integer('unit_price_amount').notNull(),
+    quantity: integer('quantity').notNull(),
+    lineTotalAmount: integer('line_total_amount').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    orderIdIdx: index('order_items_order_id_idx').on(table.orderId),
+  }),
+);
+
+export const customerOrderFlags = pgTable(
+  'customer_order_flags',
+  {
+    customerIdentifier: varchar('customer_identifier', { length: 120 }).primaryKey(),
+    noShowCount: integer('no_show_count').default(0).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    noShowCountIdx: index('customer_order_flags_no_show_count_idx').on(table.noShowCount),
+  }),
+);
+
 export const walletEntryTypeEnum = pgEnum('wallet_entry_type', [
   'topup_card',
   'topup_transfer',

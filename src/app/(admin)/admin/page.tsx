@@ -81,6 +81,28 @@ type WalletTransaction = {
   createdAt: string;
 };
 
+type AdminOrder = {
+  id: string;
+  customerIdentifier: string;
+  storeCode: StoreCode;
+  storeName: string;
+  status: string;
+  totalAmount: number;
+  placedAt: string;
+  acceptedAt: string | null;
+  rejectedAt: string | null;
+  cancelledAt: string | null;
+  readyAt: string | null;
+  completedAt: string | null;
+  noShowAt: string | null;
+  rejectionReason: string | null;
+  items: Array<{
+    id: string;
+    itemNameSnapshot: string;
+    quantity: number;
+  }>;
+};
+
 function formatClp(amount: number) {
   return new Intl.NumberFormat('es-CL', {
     style: 'currency',
@@ -94,6 +116,27 @@ function formatDateTime(value: string) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
+}
+
+function getStatusLabel(status: string) {
+  switch (status) {
+    case 'pending_acceptance':
+      return 'Pendiente';
+    case 'accepted':
+      return 'Aceptada';
+    case 'rejected':
+      return 'Rechazada';
+    case 'cancelled_by_customer':
+      return 'Cancelada';
+    case 'ready_for_pickup':
+      return 'Lista';
+    case 'completed':
+      return 'Completada';
+    case 'no_show':
+      return 'No-show';
+    default:
+      return status;
+  }
 }
 
 export default function AdminHomePage() {
@@ -122,6 +165,9 @@ export default function AdminHomePage() {
   const [adjustmentDirection, setAdjustmentDirection] = useState<'credit' | 'debit'>('credit');
   const [adjustmentAmount, setAdjustmentAmount] = useState('1000');
   const [adjustmentNote, setAdjustmentNote] = useState('Ajuste operativo');
+  const [orders, setOrders] = useState<AdminOrder[]>([]);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
 
   async function loadOverview() {
     const response = await fetch(`/api/admin/stores/${storeCode}/order-ahead`, {
@@ -167,6 +213,26 @@ export default function AdminHomePage() {
 
     const nextAttachId = (payload.menu as MenuOverview).availableBaseItems[0]?.id ?? '';
     setAttachMenuItemId((current) => current || nextAttachId);
+  }
+
+  async function loadOrders() {
+    const response = await fetch(`/api/admin/stores/${storeCode}/orders`, {
+      cache: 'no-store',
+    });
+    const payload = await response.json();
+
+    if (response.status === 401) {
+      router.push('/admin/login');
+      return;
+    }
+
+    if (!response.ok) {
+      setOrdersError(payload.error ?? 'Could not load store orders.');
+      return;
+    }
+
+    setOrders((payload.orders as AdminOrder[]) ?? []);
+    setOrdersError(null);
   }
 
   async function loadWalletData(customerKey = walletCustomerKey) {
@@ -216,7 +282,7 @@ export default function AdminHomePage() {
   }
 
   useEffect(() => {
-    void Promise.all([loadOverview(), loadMenuOverview()]);
+    void Promise.all([loadOverview(), loadMenuOverview(), loadOrders()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeCode]);
 
@@ -419,12 +485,61 @@ export default function AdminHomePage() {
     await loadWalletData();
   }
 
+  async function onOrderAction(orderId: string, action: 'accept' | 'ready' | 'complete' | 'no-show') {
+    const response = await fetch(`/api/admin/orders/${orderId}/${action}`, { method: 'POST' });
+    const payload = await response.json();
+
+    if (response.status === 401) {
+      router.push('/admin/login');
+      return;
+    }
+
+    if (!response.ok) {
+      setOrdersError(payload.error ?? 'No se pudo actualizar la orden.');
+      return;
+    }
+
+    await loadOrders();
+  }
+
+  async function onRejectOrder(orderId: string) {
+    const reason = rejectReasons[orderId]?.trim();
+    if (!reason) {
+      setOrdersError('Debes ingresar un motivo de rechazo.');
+      return;
+    }
+
+    const response = await fetch(`/api/admin/orders/${orderId}/reject`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ reason }),
+    });
+    const payload = await response.json();
+
+    if (response.status === 401) {
+      router.push('/admin/login');
+      return;
+    }
+
+    if (!response.ok) {
+      setOrdersError(payload.error ?? 'No se pudo rechazar la orden.');
+      return;
+    }
+
+    setRejectReasons((current) => ({ ...current, [orderId]: '' }));
+    await loadOrders();
+  }
+
   return (
     <main style={{ padding: 24, display: 'grid', gap: 24 }}>
       <header>
         <h1>Admin</h1>
-        <p>Operación de order-ahead, menú y wallet prepaga.</p>
-        <p>Las cargas por caja aceptan owner/barista. Los ajustes admin quedan validados owner-only en backend.</p>
+        <p>Operación de order-ahead, menú, órdenes y wallet prepaga.</p>
+        <p>
+          Las cargas por caja aceptan owner/barista. Los ajustes admin quedan validados owner-only en backend.
+        </p>
       </header>
 
       <section style={{ border: '1px solid #ddd', padding: 16 }}>
@@ -486,6 +601,71 @@ export default function AdminHomePage() {
             </ul>
           </>
         ) : null}
+      </section>
+
+      <section style={{ border: '1px solid #ddd', padding: 16 }}>
+        <h2>Órdenes de la sucursal</h2>
+        {ordersError ? <p>{ordersError}</p> : null}
+        {orders.length === 0 ? (
+          <p>No hay órdenes todavía para esta sucursal.</p>
+        ) : (
+          <ul style={{ display: 'grid', gap: 16, paddingLeft: 20 }}>
+            {orders.map((order) => (
+              <li key={order.id}>
+                <strong>{getStatusLabel(order.status)}</strong> — {formatClp(order.totalAmount)}
+                <div>Cliente: {order.customerIdentifier}</div>
+                <div>Creada: {formatDateTime(order.placedAt)}</div>
+                <div>Timestamps: aceptación {order.acceptedAt ? formatDateTime(order.acceptedAt) : '—'} / lista {order.readyAt ? formatDateTime(order.readyAt) : '—'}</div>
+                <div>
+                  Items: {order.items.map((item) => `${item.itemNameSnapshot} x${item.quantity}`).join(', ')}
+                </div>
+                {order.rejectionReason ? <div>Motivo rechazo: {order.rejectionReason}</div> : null}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  {order.status === 'pending_acceptance' ? (
+                    <>
+                      <button type="button" onClick={() => onOrderAction(order.id, 'accept')}>
+                        Aceptar
+                      </button>
+                      <input
+                        placeholder="Motivo rechazo"
+                        value={rejectReasons[order.id] ?? ''}
+                        onChange={(event) =>
+                          setRejectReasons((current) => ({
+                            ...current,
+                            [order.id]: event.target.value,
+                          }))
+                        }
+                      />
+                      <button type="button" onClick={() => onRejectOrder(order.id)}>
+                        Rechazar
+                      </button>
+                    </>
+                  ) : null}
+                  {order.status === 'accepted' ? (
+                    <>
+                      <button type="button" onClick={() => onOrderAction(order.id, 'ready')}>
+                        Marcar lista
+                      </button>
+                      <button type="button" onClick={() => onOrderAction(order.id, 'no-show')}>
+                        Marcar no-show
+                      </button>
+                    </>
+                  ) : null}
+                  {order.status === 'ready_for_pickup' ? (
+                    <>
+                      <button type="button" onClick={() => onOrderAction(order.id, 'complete')}>
+                        Completar
+                      </button>
+                      <button type="button" onClick={() => onOrderAction(order.id, 'no-show')}>
+                        Marcar no-show
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section style={{ border: '1px solid #ddd', padding: 16 }}>
