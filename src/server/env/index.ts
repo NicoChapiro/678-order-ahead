@@ -13,10 +13,6 @@ const customerPhoneAuthEnvSchema = z.object({
   PHONE_AUTH_API_KEY: z.string().min(1),
 });
 
-const internalSecurityEnvSchema = z.object({
-  INTERNAL_API_SECRET: z.string().min(1),
-});
-
 const bootstrapEnvSchema = nodeEnvSchema.extend({
   ADMIN_BOOTSTRAP_EMAIL: z.string().email().optional(),
   ADMIN_BOOTSTRAP_PASSWORD: z.string().min(8).optional(),
@@ -29,13 +25,11 @@ const clientEnvSchema = z.object({
 
 type DatabaseEnv = z.infer<typeof databaseEnvSchema>;
 type CustomerPhoneAuthEnv = z.infer<typeof customerPhoneAuthEnvSchema>;
-type InternalSecurityEnv = z.infer<typeof internalSecurityEnvSchema>;
 type BootstrapEnv = z.infer<typeof bootstrapEnvSchema>;
 type ClientEnv = z.infer<typeof clientEnvSchema>;
 
 let cachedDatabaseEnv: DatabaseEnv | null = null;
 let cachedCustomerPhoneAuthEnv: CustomerPhoneAuthEnv | null = null;
-let cachedInternalSecurityEnv: InternalSecurityEnv | null = null;
 let cachedBootstrapEnv: BootstrapEnv | null = null;
 let cachedClientEnv: ClientEnv | null = null;
 
@@ -62,18 +56,6 @@ export function getCustomerPhoneAuthEnv(): CustomerPhoneAuthEnv {
   });
 
   return cachedCustomerPhoneAuthEnv;
-}
-
-export function getInternalSecurityEnv(): InternalSecurityEnv {
-  if (cachedInternalSecurityEnv) {
-    return cachedInternalSecurityEnv;
-  }
-
-  cachedInternalSecurityEnv = internalSecurityEnvSchema.parse({
-    INTERNAL_API_SECRET: process.env.INTERNAL_API_SECRET,
-  });
-
-  return cachedInternalSecurityEnv;
 }
 
 export function getBootstrapEnv(): BootstrapEnv {
