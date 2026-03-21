@@ -228,7 +228,7 @@ export default function ClientHomePage() {
       return;
     }
 
-    const response = await fetch(`/api/orders/${encodeURIComponent(normalizedCustomerKey)}`, {
+    const response = await fetch(`/api/customers/${encodeURIComponent(normalizedCustomerKey)}/orders`, {
       cache: 'no-store',
     });
     const payload = await response.json();
