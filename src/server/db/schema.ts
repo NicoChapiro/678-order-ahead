@@ -1,5 +1,6 @@
 import {
   boolean,
+  integer,
   pgEnum,
   pgTable,
   text,
@@ -61,7 +62,10 @@ export const storeHours = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
-    perDayUniqueIdx: uniqueIndex('store_hours_store_weekday_unique_idx').on(table.storeId, table.weekday),
+    perDayUniqueIdx: uniqueIndex('store_hours_store_weekday_unique_idx').on(
+      table.storeId,
+      table.weekday,
+    ),
   }),
 );
 
@@ -128,5 +132,47 @@ export const staffSessions = pgTable(
   },
   (table) => ({
     tokenHashUniqueIdx: uniqueIndex('staff_sessions_token_hash_unique_idx').on(table.tokenHash),
+  }),
+);
+
+export const menuItems = pgTable(
+  'menu_items',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    code: varchar('code', { length: 64 }).notNull(),
+    name: varchar('name', { length: 120 }).notNull(),
+    description: text('description'),
+    isActive: boolean('is_active').default(true).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    codeUniqueIdx: uniqueIndex('menu_items_code_unique_idx').on(table.code),
+  }),
+);
+
+export const storeMenuItems = pgTable(
+  'store_menu_items',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    storeId: uuid('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'cascade' }),
+    menuItemId: uuid('menu_item_id')
+      .notNull()
+      .references(() => menuItems.id, { onDelete: 'cascade' }),
+    priceAmount: integer('price_amount').notNull(),
+    currencyCode: varchar('currency_code', { length: 3 }).default('CLP').notNull(),
+    isVisible: boolean('is_visible').default(true).notNull(),
+    isInStock: boolean('is_in_stock').default(true).notNull(),
+    sortOrder: integer('sort_order'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    storeMenuItemUniqueIdx: uniqueIndex('store_menu_items_store_menu_item_unique_idx').on(
+      table.storeId,
+      table.menuItemId,
+    ),
   }),
 );
