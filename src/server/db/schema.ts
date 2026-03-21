@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -174,5 +175,103 @@ export const storeMenuItems = pgTable(
       table.storeId,
       table.menuItemId,
     ),
+  }),
+);
+
+
+export const walletEntryTypeEnum = pgEnum('wallet_entry_type', [
+  'topup_card',
+  'topup_transfer',
+  'topup_cashier',
+  'topup_mercado_pago',
+  'admin_adjustment_credit',
+  'admin_adjustment_debit',
+  'order_payment',
+  'order_reversal',
+]);
+export const walletEntryStatusEnum = pgEnum('wallet_entry_status', ['posted', 'pending', 'cancelled']);
+export const walletReferenceTypeEnum = pgEnum('wallet_reference_type', [
+  'manual_topup',
+  'cashier_topup',
+  'admin_adjustment',
+  'order',
+]);
+export const walletTopupMethodEnum = pgEnum('wallet_topup_method', [
+  'card',
+  'transfer',
+  'cashier',
+  'mercado_pago',
+]);
+export const walletTopupRequestStatusEnum = pgEnum('wallet_topup_request_status', [
+  'pending',
+  'approved',
+  'rejected',
+]);
+
+export const customerWallets = pgTable(
+  'customer_wallets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    customerIdentifier: varchar('customer_identifier', { length: 120 }).notNull(),
+    currencyCode: varchar('currency_code', { length: 3 }).default('CLP').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    customerIdentifierUniqueIdx: uniqueIndex('customer_wallets_customer_identifier_unique_idx').on(
+      table.customerIdentifier,
+    ),
+  }),
+);
+
+export const walletLedgerEntries = pgTable(
+  'wallet_ledger_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    walletId: uuid('wallet_id')
+      .notNull()
+      .references(() => customerWallets.id, { onDelete: 'cascade' }),
+    entryType: walletEntryTypeEnum('entry_type').notNull(),
+    amountSigned: integer('amount_signed').notNull(),
+    currencyCode: varchar('currency_code', { length: 3 }).default('CLP').notNull(),
+    status: walletEntryStatusEnum('status').default('posted').notNull(),
+    referenceType: walletReferenceTypeEnum('reference_type'),
+    referenceId: varchar('reference_id', { length: 120 }),
+    externalReference: varchar('external_reference', { length: 191 }),
+    note: text('note'),
+    createdByUserId: varchar('created_by_user_id', { length: 64 }),
+    createdByRole: varchar('created_by_role', { length: 32 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    walletIdIdx: index('wallet_ledger_entries_wallet_id_idx').on(table.walletId),
+    createdAtIdx: index('wallet_ledger_entries_created_at_idx').on(table.createdAt),
+    walletCreatedAtIdx: index('wallet_ledger_entries_wallet_id_created_at_idx').on(
+      table.walletId,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const walletTopupRequests = pgTable(
+  'wallet_topup_requests',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    walletId: uuid('wallet_id')
+      .notNull()
+      .references(() => customerWallets.id, { onDelete: 'cascade' }),
+    method: walletTopupMethodEnum('method').notNull(),
+    requestedAmount: integer('requested_amount').notNull(),
+    status: walletTopupRequestStatusEnum('status').default('pending').notNull(),
+    submittedReference: varchar('submitted_reference', { length: 191 }),
+    reviewedByUserId: varchar('reviewed_by_user_id', { length: 64 }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    walletIdIdx: index('wallet_topup_requests_wallet_id_idx').on(table.walletId),
+    createdAtIdx: index('wallet_topup_requests_created_at_idx').on(table.createdAt),
   }),
 );
