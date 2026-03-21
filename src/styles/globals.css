@@ -15,7 +15,8 @@
   --border: #d9e2ec;
   --border-strong: #bfd0e0;
   --text: #142033;
-  --muted: #5b6b82;
+  --muted: #4f627b;
+  --muted-strong: #41546e;
   --primary: #2d6cdf;
   --primary-strong: #1f56b8;
   --primary-soft: #e8f0ff;
@@ -207,6 +208,19 @@ ul {
   margin: 0;
 }
 
+.summary-card__title-row > * {
+  min-width: 0;
+}
+
+.summary-card__control,
+.card-header__control {
+  width: min(100%, 240px);
+}
+
+.stack {
+  min-width: 0;
+}
+
 .section-card {
   padding: 1.5rem;
   display: grid;
@@ -215,8 +229,8 @@ ul {
 
 .section-grid {
   display: grid;
-  gap: 1.5rem;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
 .stat-grid {
@@ -228,7 +242,7 @@ ul {
 .stat-item {
   display: grid;
   gap: 0.35rem;
-  padding: 1rem;
+  padding: 0.9rem 1rem;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.78);
   border: 1px solid rgba(217, 226, 236, 0.85);
@@ -243,11 +257,17 @@ ul {
 }
 
 .stat-label,
-.field-help,
 .kicker,
 .row-label,
 .muted {
   color: var(--muted);
+}
+
+.meta-text,
+.helper-text,
+.field-help {
+  color: var(--muted-strong);
+  line-height: 1.45;
 }
 
 .stat-value {
@@ -396,7 +416,7 @@ ul {
 }
 
 .form-row--inline {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   align-items: end;
 }
 
@@ -427,6 +447,20 @@ ul {
 
 .toolbar {
   justify-content: space-between;
+  align-items: flex-start;
+}
+
+.inline-actions--tight {
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.inline-actions--tight > * {
+  min-width: 0;
+}
+
+.inline-actions--end {
+  justify-content: flex-end;
 }
 
 .button {
@@ -434,8 +468,8 @@ ul {
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
-  min-height: 44px;
-  padding: 0.75rem 1rem;
+  min-height: 42px;
+  padding: 0.72rem 1rem;
   border-radius: 14px;
   font-weight: 700;
 }
@@ -446,8 +480,9 @@ ul {
 }
 
 .button--secondary {
-  background: #eef3fa;
-  color: #30445d;
+  background: #e7eef8;
+  color: #25364a;
+  border: 1px solid #d5e0ee;
 }
 
 .button--ghost {
@@ -456,15 +491,15 @@ ul {
   border: 1px solid #d8e3f7;
 }
 
+.button--soft-danger {
+  background: #fce6e6;
+  color: #a23535;
+  border: 1px solid #efbcbc;
+}
+
 .button--danger {
   background: linear-gradient(180deg, #d45d5d, #b44343);
   color: white;
-}
-
-.button--soft-danger {
-  background: var(--danger-soft);
-  color: var(--danger);
-  border: 1px solid #f0c7c7;
 }
 
 .button--block {
@@ -489,7 +524,7 @@ ul {
 .order-card,
 .menu-item-card,
 .transaction-row {
-  padding: 1rem;
+  padding: 0.95rem;
   border: 1px solid rgba(217, 226, 236, 0.95);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.92);
@@ -503,6 +538,12 @@ ul {
   gap: 0.75rem;
   align-items: flex-start;
   flex-wrap: wrap;
+}
+
+.order-card__header > *,
+.menu-item-card__header > *,
+.transaction-row > * {
+  min-width: 0;
 }
 
 .order-card__metrics,
@@ -554,10 +595,42 @@ ul {
 }
 
 .surface-soft {
-  padding: 1rem;
+  padding: 0.9rem 1rem;
   border-radius: 18px;
   background: rgba(240, 245, 252, 0.9);
   border: 1px solid #dde6f0;
+}
+
+.compact-card {
+  gap: 0.85rem;
+}
+
+.compact-list {
+  gap: 0.75rem;
+}
+
+.menu-config-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.menu-config-grid > * {
+  min-width: 0;
+}
+
+.transaction-meta {
+  align-items: baseline;
+}
+
+@media (max-width: 1100px) {
+  .page-columns {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 0.92fr);
+  }
+
+  .wallet-layout {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
 }
 
 @media (max-width: 920px) {
@@ -570,5 +643,51 @@ ul {
   .summary-card,
   .section-card {
     padding: 1.25rem;
+  }
+
+  .summary-card__control,
+  .card-header__control {
+    width: 100%;
+  }
+
+  .inline-actions--tight {
+    align-items: stretch;
+  }
+
+  .inline-actions--tight .button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  main {
+    padding: 1.25rem 0.85rem 3rem;
+  }
+
+  .stat-grid,
+  .order-card__metrics,
+  .meta-grid,
+  .form-grid--two,
+  .form-row--inline,
+  .menu-config-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar,
+  .transaction-meta,
+  .order-item-row,
+  .menu-metadata {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .quantity-control {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .quantity-control button {
+    width: 44px;
+    height: 44px;
   }
 }
