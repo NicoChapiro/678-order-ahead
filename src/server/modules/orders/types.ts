@@ -20,7 +20,35 @@ export const ORDER_STATUS_VALUES = [
   'no_show',
 ] as const;
 
+export const ORDER_NOTIFICATION_TYPE_VALUES = [
+  'order_accepted',
+  'order_rejected',
+  'order_ready',
+  'order_completed',
+  'order_cancelled',
+  'order_no_show',
+] as const;
+
+export const ORDER_NOTIFICATION_CHANNEL_VALUES = ['internal', 'push', 'whatsapp', 'sms'] as const;
+
+export const ORDER_NOTIFICATION_STATUS_VALUES = ['pending', 'skipped', 'sent', 'failed'] as const;
+
+export const ORDER_EVENT_TYPE_VALUES = [
+  'order_created',
+  'order_accepted',
+  'order_rejected',
+  'order_ready',
+  'order_completed',
+  'order_cancelled',
+  'order_no_show',
+] as const;
+
 export type OrderStatus = (typeof ORDER_STATUS_VALUES)[number];
+export type OrderNotificationType = (typeof ORDER_NOTIFICATION_TYPE_VALUES)[number];
+export type OrderNotificationChannel = (typeof ORDER_NOTIFICATION_CHANNEL_VALUES)[number];
+export type OrderNotificationStatus = (typeof ORDER_NOTIFICATION_STATUS_VALUES)[number];
+export type OrderEventType = (typeof ORDER_EVENT_TYPE_VALUES)[number];
+export type OrderActorRole = 'owner' | 'barista' | 'system' | 'customer';
 
 export type OrderItemSelectionInput = {
   menuItemId: string;
@@ -37,6 +65,29 @@ export type OrderItem = {
   quantity: number;
   lineTotalAmount: number;
   createdAt: string;
+};
+
+export type OrderEventRecord = {
+  id: string;
+  orderId: string;
+  eventType: OrderEventType;
+  actorUserId: string | null;
+  actorRole: string | null;
+  metadataJson: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+export type OrderNotificationRecord = {
+  id: string;
+  orderId: string;
+  notificationType: OrderNotificationType;
+  channel: OrderNotificationChannel;
+  status: OrderNotificationStatus;
+  recipientCustomerIdentifier: string | null;
+  payloadJson: Record<string, unknown> | null;
+  failureReason: string | null;
+  createdAt: string;
+  processedAt: string | null;
 };
 
 export type OrderRecord = {
@@ -57,12 +108,15 @@ export type OrderRecord = {
   noShowAt: string | null;
   rejectionReason: string | null;
   cancellationReason: string | null;
+  lastEvent: OrderEventRecord | null;
   createdAt: string;
   updatedAt: string;
 };
 
 export type OrderDetail = OrderRecord & {
   items: OrderItem[];
+  events: OrderEventRecord[];
+  notifications: OrderNotificationRecord[];
 };
 
 export type CustomerOrderFlags = {
@@ -118,6 +172,38 @@ export type UpdateOrderStatusInput = {
   cancellationReason?: string | null;
 };
 
+export type CreateOrderEventInput = {
+  orderId: string;
+  eventType: OrderEventType;
+  actorUserId?: string | null;
+  actorRole?: string | null;
+  metadataJson?: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+export type CreateOrderNotificationInput = {
+  orderId: string;
+  notificationType: OrderNotificationType;
+  channel: OrderNotificationChannel;
+  status: OrderNotificationStatus;
+  recipientCustomerIdentifier?: string | null;
+  payloadJson?: Record<string, unknown> | null;
+  failureReason?: string | null;
+  createdAt: string;
+  processedAt?: string | null;
+};
+
+export type OrderActionResult = {
+  order: OrderDetail;
+  transitionApplied: boolean;
+  event: OrderEventRecord | null;
+  notification: OrderNotificationRecord | null;
+};
+
+export type OrderNoShowResult = OrderActionResult & {
+  customerFlags: CustomerOrderFlags;
+};
+
 export type OrderRepository = {
   getStoreOrderContext(storeCode: StoreCode): Promise<StoreOrderContext | null>;
   listStoreOrderMenuItems(storeCode: StoreCode, menuItemIds: string[]): Promise<StoreOrderMenuItem[]>;
@@ -125,8 +211,10 @@ export type OrderRepository = {
   createOrderItems(items: CreateOrderItemInput[]): Promise<OrderItem[]>;
   getOrderById(orderId: string): Promise<OrderDetail | null>;
   listCustomerOrders(customerIdentifier: string): Promise<OrderDetail[]>;
-  listAdminOrders(storeCode: StoreCode): Promise<OrderDetail[]>;
+  listAdminOrders(storeCode: StoreCode, status?: OrderStatus): Promise<OrderDetail[]>;
   updateOrderStatus(input: UpdateOrderStatusInput): Promise<OrderRecord | null>;
+  createOrderEvent(input: CreateOrderEventInput): Promise<OrderEventRecord>;
+  createOrderNotification(input: CreateOrderNotificationInput): Promise<OrderNotificationRecord>;
   getCustomerOrderFlags(customerIdentifier: string): Promise<CustomerOrderFlags | null>;
   incrementCustomerNoShowCount(customerIdentifier: string, actedAt: string): Promise<CustomerOrderFlags>;
   findWalletByCustomerIdentifier(customerIdentifier: string): Promise<CustomerWallet | null>;

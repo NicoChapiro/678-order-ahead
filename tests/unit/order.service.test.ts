@@ -3,22 +3,30 @@ import {
   acceptOrder,
   cancelOrderByCustomer,
   CancellationWindowExpiredError,
+  completeOrder,
   createOrder,
   InvalidOrderStateTransitionError,
   markOrderNoShow,
+  markOrderReadyForPickup,
   MenuItemUnavailableError,
   OrderAheadUnavailableError,
   OrderInsufficientFundsError,
+  OrderValidationError,
   rejectOrder,
 } from '@/server/modules/orders/service';
 import type {
+  CreateOrderEventInput,
   CreateOrderInput,
   CreateOrderItemInput,
+  CreateOrderNotificationInput,
   CustomerOrderFlags,
   OrderDetail,
+  OrderEventRecord,
   OrderItem,
+  OrderNotificationRecord,
   OrderRecord,
   OrderRepository,
+  OrderStatus,
   StoreOrderContext,
   StoreOrderMenuItem,
   UpdateOrderStatusInput,
@@ -39,6 +47,8 @@ class InMemoryOrderRepository implements OrderRepository {
   orderSeq = 1;
   orderItemSeq = 1;
   ledgerSeq = 1;
+  eventSeq = 1;
+  notificationSeq = 1;
   tick = 0;
 
   stores: StoreOrderContext[] = [
@@ -81,6 +91,8 @@ class InMemoryOrderRepository implements OrderRepository {
   ledgerEntries: WalletLedgerEntry[] = [];
   orders: OrderRecord[] = [];
   orderItems: OrderItem[] = [];
+  orderEvents: OrderEventRecord[] = [];
+  orderNotifications: OrderNotificationRecord[] = [];
   customerFlags: CustomerOrderFlags[] = [];
   topupRequests: WalletTopupRequest[] = [];
 
@@ -89,10 +101,20 @@ class InMemoryOrderRepository implements OrderRepository {
     return new Date(Date.UTC(2026, 0, 1, 0, 0, this.tick)).toISOString();
   }
 
-  private attachItems(order: OrderRecord): OrderDetail {
+  private attachOrder(order: OrderRecord): OrderDetail {
+    const events = this.orderEvents
+      .filter((event) => event.orderId === order.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const notifications = this.orderNotifications
+      .filter((notification) => notification.orderId === order.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
     return {
       ...order,
+      lastEvent: events[0] ?? null,
       items: this.orderItems.filter((item) => item.orderId === order.id),
+      events,
+      notifications,
     };
   }
 
@@ -127,6 +149,7 @@ class InMemoryOrderRepository implements OrderRepository {
       noShowAt: null,
       rejectionReason: null,
       cancellationReason: null,
+      lastEvent: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -152,17 +175,19 @@ class InMemoryOrderRepository implements OrderRepository {
 
   async getOrderById(orderId: string) {
     const order = this.orders.find((entry) => entry.id === orderId) ?? null;
-    return order ? this.attachItems(order) : null;
+    return order ? this.attachOrder(order) : null;
   }
 
   async listCustomerOrders(customerIdentifier: string) {
     return this.orders
       .filter((order) => order.customerIdentifier === customerIdentifier)
-      .map((order) => this.attachItems(order));
+      .map((order) => this.attachOrder(order));
   }
 
-  async listAdminOrders(storeCode: 'store_1' | 'store_2' | 'store_3') {
-    return this.orders.filter((order) => order.storeCode === storeCode).map((order) => this.attachItems(order));
+  async listAdminOrders(storeCode: 'store_1' | 'store_2' | 'store_3', status?: OrderStatus) {
+    return this.orders
+      .filter((order) => order.storeCode === storeCode && (!status || order.status === status))
+      .map((order) => this.attachOrder(order));
   }
 
   async updateOrderStatus(input: UpdateOrderStatusInput) {
@@ -187,6 +212,37 @@ class InMemoryOrderRepository implements OrderRepository {
     if (input.status === 'no_show') order.noShowAt = input.actedAt;
 
     return order;
+  }
+
+  async createOrderEvent(input: CreateOrderEventInput) {
+    const event: OrderEventRecord = {
+      id: `event-${this.eventSeq++}`,
+      orderId: input.orderId,
+      eventType: input.eventType,
+      actorUserId: input.actorUserId ?? null,
+      actorRole: input.actorRole ?? null,
+      metadataJson: input.metadataJson ?? null,
+      createdAt: input.createdAt,
+    };
+    this.orderEvents.push(event);
+    return event;
+  }
+
+  async createOrderNotification(input: CreateOrderNotificationInput) {
+    const notification: OrderNotificationRecord = {
+      id: `notification-${this.notificationSeq++}`,
+      orderId: input.orderId,
+      notificationType: input.notificationType,
+      channel: input.channel,
+      status: input.status,
+      recipientCustomerIdentifier: input.recipientCustomerIdentifier ?? null,
+      payloadJson: input.payloadJson ?? null,
+      failureReason: input.failureReason ?? null,
+      createdAt: input.createdAt,
+      processedAt: input.processedAt ?? null,
+    };
+    this.orderNotifications.push(notification);
+    return notification;
   }
 
   async getCustomerOrderFlags(customerIdentifier: string) {
@@ -322,7 +378,7 @@ describe('order service', () => {
     });
   });
 
-  it('creates an order and posts a wallet debit', async () => {
+  it('creates an order and posts a wallet debit plus creation event', async () => {
     const order = await createOrder(repository, {
       customerIdentifier: 'demo-wallet-customer',
       storeCode: 'store_1',
@@ -333,6 +389,7 @@ describe('order service', () => {
     expect(order.totalAmount).toBe(3600);
     expect(repository.ledgerEntries.at(-1)?.entryType).toBe('order_payment');
     expect(repository.ledgerEntries.at(-1)?.amountSigned).toBe(-3600);
+    expect(order.events[0]?.eventType).toBe('order_created');
   });
 
   it('rejects order creation when wallet balance is insufficient', async () => {
@@ -369,21 +426,152 @@ describe('order service', () => {
     ).rejects.toBeInstanceOf(MenuItemUnavailableError);
   });
 
-  it('rejecting a pending order creates a reversal', async () => {
+  it('accepting an order creates notification and event records', async () => {
     const order = await createOrder(repository, {
       customerIdentifier: 'demo-wallet-customer',
       storeCode: 'store_1',
       items: [{ menuItemId: 'menu-1', quantity: 1 }],
     });
 
-    const updated = await rejectOrder(repository, { orderId: order.id, reason: 'Sin insumos' });
+    const result = await acceptOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
 
-    expect(updated.status).toBe('rejected');
-    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(2);
-    expect(repository.ledgerEntries.at(-1)?.entryType).toBe('order_reversal');
+    expect(result.transitionApplied).toBe(true);
+    expect(result.order.status).toBe('accepted');
+    expect(result.event?.eventType).toBe('order_accepted');
+    expect(result.notification?.notificationType).toBe('order_accepted');
   });
 
-  it('cancelling within five minutes creates a reversal', async () => {
+  it('reject requires a reason and creates reversal plus notification/event', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+
+    await expect(rejectOrder(repository, { orderId: order.id })).rejects.toBeInstanceOf(OrderValidationError);
+
+    const result = await rejectOrder(repository, {
+      orderId: order.id,
+      reason: 'Sin insumos',
+      actorUserId: 'staff-1',
+      actorRole: 'owner',
+    });
+
+    expect(result.order.status).toBe('rejected');
+    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(2);
+    expect(repository.ledgerEntries.at(-1)?.entryType).toBe('order_reversal');
+    expect(result.event?.eventType).toBe('order_rejected');
+    expect(result.notification?.notificationType).toBe('order_rejected');
+  });
+
+  it('ready creates notification and event records', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+    await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+
+    const result = await markOrderReadyForPickup(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
+
+    expect(result.order.status).toBe('ready_for_pickup');
+    expect(result.event?.eventType).toBe('order_ready');
+    expect(result.notification?.notificationType).toBe('order_ready');
+  });
+
+  it('complete creates notification and event records', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+    await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    await markOrderReadyForPickup(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
+
+    const result = await completeOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-2',
+      actorRole: 'owner',
+    });
+
+    expect(result.order.status).toBe('completed');
+    expect(result.event?.eventType).toBe('order_completed');
+    expect(result.notification?.notificationType).toBe('order_completed');
+  });
+
+  it('no-show requires a reason and increments counter once', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+    await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+
+    await expect(markOrderNoShow(repository, { orderId: order.id })).rejects.toBeInstanceOf(OrderValidationError);
+
+    const result = await markOrderNoShow(repository, {
+      orderId: order.id,
+      reason: 'Cliente no retiró',
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
+
+    expect(result.order.status).toBe('no_show');
+    expect(result.customerFlags.noShowCount).toBe(1);
+    expect(result.event?.eventType).toBe('order_no_show');
+    expect(result.notification?.notificationType).toBe('order_no_show');
+
+    const duplicate = await markOrderNoShow(repository, {
+      orderId: order.id,
+      reason: 'Cliente no retiró',
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
+
+    expect(duplicate.transitionApplied).toBe(false);
+    expect(duplicate.customerFlags.noShowCount).toBe(1);
+  });
+
+  it('duplicate admin actions do not corrupt state', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+
+    const first = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    const second = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+
+    expect(first.transitionApplied).toBe(true);
+    expect(second.transitionApplied).toBe(false);
+    expect(repository.orderEvents.filter((event) => event.orderId === order.id && event.eventType === 'order_accepted')).toHaveLength(1);
+  });
+
+  it('invalid transitions are rejected', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+
+    await expect(
+      completeOrder(repository, { orderId: order.id, actorUserId: 'staff-2', actorRole: 'owner' }),
+    ).rejects.toBeInstanceOf(InvalidOrderStateTransitionError);
+  });
+
+  it('customer cancellation creates notification/event and stays reversal-safe', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 
@@ -395,9 +583,15 @@ describe('order service', () => {
 
     vi.advanceTimersByTime(4 * 60 * 1000);
 
-    const updated = await cancelOrderByCustomer(repository, { orderId: order.id });
-    expect(updated.status).toBe('cancelled_by_customer');
-    expect(repository.ledgerEntries.at(-1)?.entryType).toBe('order_reversal');
+    const result = await cancelOrderByCustomer(repository, { orderId: order.id });
+    expect(result.order.status).toBe('cancelled_by_customer');
+    expect(result.notification?.notificationType).toBe('order_cancelled');
+    expect(result.event?.eventType).toBe('order_cancelled');
+    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(2);
+
+    const duplicate = await cancelOrderByCustomer(repository, { orderId: order.id });
+    expect(duplicate.transitionApplied).toBe(false);
+    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(2);
 
     vi.useRealTimers();
   });
@@ -419,45 +613,5 @@ describe('order service', () => {
     );
 
     vi.useRealTimers();
-  });
-
-  it('prevents invalid state transitions', async () => {
-    const order = await createOrder(repository, {
-      customerIdentifier: 'demo-wallet-customer',
-      storeCode: 'store_1',
-      items: [{ menuItemId: 'menu-1', quantity: 1 }],
-    });
-
-    await expect(acceptOrder(repository, { orderId: order.id })).resolves.toBeTruthy();
-    await expect(rejectOrder(repository, { orderId: order.id, reason: 'late reject' })).rejects.toBeInstanceOf(
-      InvalidOrderStateTransitionError,
-    );
-  });
-
-  it('marking no-show increments customer counter', async () => {
-    const order = await createOrder(repository, {
-      customerIdentifier: 'demo-wallet-customer',
-      storeCode: 'store_1',
-      items: [{ menuItemId: 'menu-1', quantity: 1 }],
-    });
-    await acceptOrder(repository, { orderId: order.id });
-
-    const result = await markOrderNoShow(repository, { orderId: order.id });
-    expect(result.order.status).toBe('no_show');
-    expect(result.customerFlags.noShowCount).toBe(1);
-  });
-
-  it('prevents duplicate reversals', async () => {
-    const order = await createOrder(repository, {
-      customerIdentifier: 'demo-wallet-customer',
-      storeCode: 'store_1',
-      items: [{ menuItemId: 'menu-1', quantity: 1 }],
-    });
-
-    await rejectOrder(repository, { orderId: order.id, reason: 'Sin stock' });
-
-    await expect(rejectOrder(repository, { orderId: order.id, reason: 'Duplicado' })).rejects.toBeInstanceOf(
-      InvalidOrderStateTransitionError,
-    );
   });
 });

@@ -4,7 +4,9 @@ import {
   customerOrderFlags,
   customerWallets,
   menuItems,
+  orderEvents,
   orderItems,
+  orderNotifications,
   orders,
   storeMenuItems,
   storeOrderAheadSettings,
@@ -13,13 +15,18 @@ import {
   walletTopupRequests,
 } from '@/server/db/schema';
 import type {
+  CreateOrderEventInput,
   CreateOrderInput,
   CreateOrderItemInput,
+  CreateOrderNotificationInput,
   CustomerOrderFlags,
   OrderDetail,
+  OrderEventRecord,
   OrderItem,
+  OrderNotificationRecord,
   OrderRecord,
   OrderRepository,
+  OrderStatus,
   StoreOrderContext,
   StoreOrderMenuItem,
   UpdateOrderStatusInput,
@@ -80,7 +87,7 @@ function mapTopupRequest(row: typeof walletTopupRequests.$inferSelect): WalletTo
   };
 }
 
-function mapOrder(row: {
+type OrderRow = {
   id: string;
   customerIdentifier: string;
   storeId: string;
@@ -100,7 +107,58 @@ function mapOrder(row: {
   cancellationReason: string | null;
   createdAt: Date;
   updatedAt: Date;
-}): OrderRecord {
+};
+
+function mapOrderItem(row: typeof orderItems.$inferSelect): OrderItem {
+  return {
+    id: row.id,
+    orderId: row.orderId,
+    menuItemId: row.menuItemId,
+    storeMenuItemId: row.storeMenuItemId,
+    itemNameSnapshot: row.itemNameSnapshot,
+    unitPriceAmount: row.unitPriceAmount,
+    quantity: row.quantity,
+    lineTotalAmount: row.lineTotalAmount,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapOrderEvent(row: typeof orderEvents.$inferSelect): OrderEventRecord {
+  return {
+    id: row.id,
+    orderId: row.orderId,
+    eventType: row.eventType,
+    actorUserId: row.actorUserId,
+    actorRole: row.actorRole,
+    metadataJson: (row.metadataJson as Record<string, unknown> | null) ?? null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapOrderNotification(row: typeof orderNotifications.$inferSelect): OrderNotificationRecord {
+  return {
+    id: row.id,
+    orderId: row.orderId,
+    notificationType: row.notificationType,
+    channel: row.channel,
+    status: row.status,
+    recipientCustomerIdentifier: row.recipientCustomerIdentifier,
+    payloadJson: (row.payloadJson as Record<string, unknown> | null) ?? null,
+    failureReason: row.failureReason,
+    createdAt: row.createdAt.toISOString(),
+    processedAt: row.processedAt?.toISOString() ?? null,
+  };
+}
+
+function mapCustomerFlags(row: typeof customerOrderFlags.$inferSelect): CustomerOrderFlags {
+  return {
+    customerIdentifier: row.customerIdentifier,
+    noShowCount: row.noShowCount,
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function buildOrderRecord(row: OrderRow, latestEvent: OrderEventRecord | null): OrderRecord {
   return {
     id: row.id,
     customerIdentifier: row.customerIdentifier,
@@ -119,31 +177,15 @@ function mapOrder(row: {
     noShowAt: row.noShowAt?.toISOString() ?? null,
     rejectionReason: row.rejectionReason,
     cancellationReason: row.cancellationReason,
+    lastEvent: latestEvent,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
-function mapOrderItem(row: typeof orderItems.$inferSelect): OrderItem {
-  return {
-    id: row.id,
-    orderId: row.orderId,
-    menuItemId: row.menuItemId,
-    storeMenuItemId: row.storeMenuItemId,
-    itemNameSnapshot: row.itemNameSnapshot,
-    unitPriceAmount: row.unitPriceAmount,
-    quantity: row.quantity,
-    lineTotalAmount: row.lineTotalAmount,
-    createdAt: row.createdAt.toISOString(),
-  };
-}
-
-function mapCustomerFlags(row: typeof customerOrderFlags.$inferSelect): CustomerOrderFlags {
-  return {
-    customerIdentifier: row.customerIdentifier,
-    noShowCount: row.noShowCount,
-    updatedAt: row.updatedAt.toISOString(),
-  };
+function toOrderRecord(detail: OrderDetail): OrderRecord {
+  const { items: _items, events: _events, notifications: _notifications, ...order } = detail;
+  return order;
 }
 
 function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRepository {
@@ -192,15 +234,52 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
     return rows.map(mapOrderItem);
   }
 
-  async function loadOrderDetailList(whereClause: any): Promise<OrderDetail[]> {
-    const orderRows = await loadOrderRows(whereClause);
-    const mappedOrders: OrderRecord[] = orderRows.map(mapOrder);
-    const items: OrderItem[] = await loadOrderItems(mappedOrders.map((order: OrderRecord) => order.id));
+  async function loadOrderEvents(orderIds: string[]) {
+    if (orderIds.length === 0) {
+      return [] as OrderEventRecord[];
+    }
 
-    return mappedOrders.map((order: OrderRecord) => ({
-      ...order,
-      items: items.filter((item: OrderItem) => item.orderId === order.id),
-    }));
+    const rows = await resolveDatabase()
+      .select()
+      .from(orderEvents)
+      .where(inArray(orderEvents.orderId, orderIds))
+      .orderBy(desc(orderEvents.createdAt), desc(orderEvents.id));
+
+    return rows.map(mapOrderEvent);
+  }
+
+  async function loadOrderNotifications(orderIds: string[]) {
+    if (orderIds.length === 0) {
+      return [] as OrderNotificationRecord[];
+    }
+
+    const rows = await resolveDatabase()
+      .select()
+      .from(orderNotifications)
+      .where(inArray(orderNotifications.orderId, orderIds))
+      .orderBy(desc(orderNotifications.createdAt), desc(orderNotifications.id));
+
+    return rows.map(mapOrderNotification);
+  }
+
+  async function loadOrderDetailList(whereClause: any): Promise<OrderDetail[]> {
+    const orderRows = (await loadOrderRows(whereClause)) as OrderRow[];
+    const orderIds = orderRows.map((order) => order.id);
+    const [items, events, notifications] = await Promise.all([
+      loadOrderItems(orderIds),
+      loadOrderEvents(orderIds),
+      loadOrderNotifications(orderIds),
+    ]);
+
+    return orderRows.map((orderRow) => {
+      const orderEventsForOrder = events.filter((event: OrderEventRecord) => event.orderId === orderRow.id);
+      return {
+        ...buildOrderRecord(orderRow, orderEventsForOrder[0] ?? null),
+        items: items.filter((item: OrderItem) => item.orderId === orderRow.id),
+        events: orderEventsForOrder,
+        notifications: notifications.filter((notification: OrderNotificationRecord) => notification.orderId === orderRow.id),
+      };
+    });
   }
 
   return {
@@ -247,16 +326,24 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
     },
 
     async createOrder(input: CreateOrderInput) {
-      const rows = await resolveDatabase().insert(orders).values({
-        customerIdentifier: input.customerIdentifier,
-        storeId: input.storeId,
-        status: input.status,
-        currencyCode: input.currencyCode,
-        totalAmount: input.totalAmount,
-        placedAt: new Date(input.placedAt),
-      }).returning();
+      const rows = await resolveDatabase()
+        .insert(orders)
+        .values({
+          customerIdentifier: input.customerIdentifier,
+          storeId: input.storeId,
+          status: input.status,
+          currencyCode: input.currencyCode,
+          totalAmount: input.totalAmount,
+          placedAt: new Date(input.placedAt),
+        })
+        .returning({ id: orders.id });
 
-      return (await loadOrderDetailList(eq(orders.id, rows[0].id)))[0];
+      const order = await this.getOrderById(rows[0].id);
+      if (!order) {
+        throw new Error('Order was created but could not be reloaded.');
+      }
+
+      return toOrderRecord(order);
     },
 
     async createOrderItems(itemsInput: CreateOrderItemInput[]) {
@@ -276,8 +363,10 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
       return loadOrderDetailList(eq(orders.customerIdentifier, customerIdentifier));
     },
 
-    async listAdminOrders(storeCode) {
-      return loadOrderDetailList(eq(stores.code, storeCode));
+    async listAdminOrders(storeCode, status?: OrderStatus) {
+      return loadOrderDetailList(
+        status ? and(eq(stores.code, storeCode), eq(orders.status, status)) : eq(stores.code, storeCode),
+      );
     },
 
     async updateOrderStatus(input: UpdateOrderStatusInput) {
@@ -308,13 +397,52 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
         updateSet.noShowAt = actedAt;
       }
 
-      const rows = await resolveDatabase().update(orders).set(updateSet).where(eq(orders.id, input.orderId)).returning({ id: orders.id });
+      const rows = await resolveDatabase()
+        .update(orders)
+        .set(updateSet)
+        .where(eq(orders.id, input.orderId))
+        .returning({ id: orders.id });
       if (!rows[0]) {
         return null;
       }
 
       const order = await this.getOrderById(rows[0].id);
-      return order;
+      return order ? toOrderRecord(order) : null;
+    },
+
+    async createOrderEvent(input: CreateOrderEventInput) {
+      const rows = await resolveDatabase()
+        .insert(orderEvents)
+        .values({
+          orderId: input.orderId,
+          eventType: input.eventType,
+          actorUserId: input.actorUserId ?? null,
+          actorRole: input.actorRole ?? null,
+          metadataJson: input.metadataJson ?? null,
+          createdAt: new Date(input.createdAt),
+        })
+        .returning();
+
+      return mapOrderEvent(rows[0]);
+    },
+
+    async createOrderNotification(input: CreateOrderNotificationInput) {
+      const rows = await resolveDatabase()
+        .insert(orderNotifications)
+        .values({
+          orderId: input.orderId,
+          notificationType: input.notificationType,
+          channel: input.channel,
+          status: input.status,
+          recipientCustomerIdentifier: input.recipientCustomerIdentifier ?? null,
+          payloadJson: input.payloadJson ?? null,
+          failureReason: input.failureReason ?? null,
+          createdAt: new Date(input.createdAt),
+          processedAt: input.processedAt ? new Date(input.processedAt) : null,
+        })
+        .returning();
+
+      return mapOrderNotification(rows[0]);
     },
 
     async getCustomerOrderFlags(customerIdentifier) {
@@ -332,19 +460,26 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
       const existing = await this.getCustomerOrderFlags(customerIdentifier);
 
       if (!existing) {
-        const rows = await resolveDatabase().insert(customerOrderFlags).values({
-          customerIdentifier,
-          noShowCount: 1,
-          updatedAt: now,
-        }).returning();
+        const rows = await resolveDatabase()
+          .insert(customerOrderFlags)
+          .values({
+            customerIdentifier,
+            noShowCount: 1,
+            updatedAt: now,
+          })
+          .returning();
 
         return mapCustomerFlags(rows[0]);
       }
 
-      const rows = await resolveDatabase().update(customerOrderFlags).set({
-        noShowCount: existing.noShowCount + 1,
-        updatedAt: now,
-      }).where(eq(customerOrderFlags.customerIdentifier, customerIdentifier)).returning();
+      const rows = await resolveDatabase()
+        .update(customerOrderFlags)
+        .set({
+          noShowCount: existing.noShowCount + 1,
+          updatedAt: now,
+        })
+        .where(eq(customerOrderFlags.customerIdentifier, customerIdentifier))
+        .returning();
 
       return mapCustomerFlags(rows[0]);
     },
@@ -382,13 +517,19 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
       const rows = await resolveDatabase()
         .select({ balance: sql<number>`COALESCE(SUM(${walletLedgerEntries.amountSigned}), 0)` })
         .from(walletLedgerEntries)
-        .where(and(eq(walletLedgerEntries.walletId, walletId), eq(walletLedgerEntries.status, 'posted')));
+        .where(
+          and(eq(walletLedgerEntries.walletId, walletId), eq(walletLedgerEntries.status, 'posted')),
+        );
 
       return Number(rows[0]?.balance ?? 0);
     },
 
     async listLedgerEntries(walletId: string) {
-      const rows = await resolveDatabase().select().from(walletLedgerEntries).where(eq(walletLedgerEntries.walletId, walletId)).orderBy(desc(walletLedgerEntries.createdAt), desc(walletLedgerEntries.id));
+      const rows = await resolveDatabase()
+        .select()
+        .from(walletLedgerEntries)
+        .where(eq(walletLedgerEntries.walletId, walletId))
+        .orderBy(desc(walletLedgerEntries.createdAt), desc(walletLedgerEntries.id));
       return rows.map(mapLedgerEntry);
     },
 

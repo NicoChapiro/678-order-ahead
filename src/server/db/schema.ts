@@ -2,6 +2,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -190,6 +191,39 @@ export const orderStatusEnum = pgEnum('order_status', [
   'no_show',
 ]);
 
+export const orderNotificationTypeEnum = pgEnum('order_notification_type', [
+  'order_accepted',
+  'order_rejected',
+  'order_ready',
+  'order_completed',
+  'order_cancelled',
+  'order_no_show',
+]);
+
+export const orderNotificationChannelEnum = pgEnum('order_notification_channel', [
+  'internal',
+  'push',
+  'whatsapp',
+  'sms',
+]);
+
+export const orderNotificationStatusEnum = pgEnum('order_notification_status', [
+  'pending',
+  'skipped',
+  'sent',
+  'failed',
+]);
+
+export const orderEventTypeEnum = pgEnum('order_event_type', [
+  'order_created',
+  'order_accepted',
+  'order_rejected',
+  'order_ready',
+  'order_completed',
+  'order_cancelled',
+  'order_no_show',
+]);
+
 export const orders = pgTable(
   'orders',
   {
@@ -241,6 +275,47 @@ export const orderItems = pgTable(
   },
   (table) => ({
     orderIdIdx: index('order_items_order_id_idx').on(table.orderId),
+  }),
+);
+
+export const orderNotifications = pgTable(
+  'order_notifications',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    notificationType: orderNotificationTypeEnum('notification_type').notNull(),
+    channel: orderNotificationChannelEnum('channel').default('internal').notNull(),
+    status: orderNotificationStatusEnum('status').default('pending').notNull(),
+    recipientCustomerIdentifier: varchar('recipient_customer_identifier', { length: 120 }),
+    payloadJson: jsonb('payload_json').$type<Record<string, unknown> | null>(),
+    failureReason: text('failure_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+  },
+  (table) => ({
+    orderIdIdx: index('order_notifications_order_id_idx').on(table.orderId),
+    createdAtIdx: index('order_notifications_created_at_idx').on(table.createdAt),
+  }),
+);
+
+export const orderEvents = pgTable(
+  'order_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    eventType: orderEventTypeEnum('event_type').notNull(),
+    actorUserId: varchar('actor_user_id', { length: 120 }),
+    actorRole: varchar('actor_role', { length: 32 }),
+    metadataJson: jsonb('metadata_json').$type<Record<string, unknown> | null>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    orderIdIdx: index('order_events_order_id_idx').on(table.orderId),
+    createdAtIdx: index('order_events_created_at_idx').on(table.createdAt),
   }),
 );
 

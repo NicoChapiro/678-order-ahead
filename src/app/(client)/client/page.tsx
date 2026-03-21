@@ -73,6 +73,12 @@ type Order = {
   noShowAt: string | null;
   rejectionReason: string | null;
   cancellationReason: string | null;
+  lastEvent: {
+    eventType: string;
+    actorRole: string | null;
+    metadataJson: Record<string, unknown> | null;
+    createdAt: string;
+  } | null;
   items: Array<{
     id: string;
     itemNameSnapshot: string;
@@ -100,7 +106,7 @@ function formatDateTime(value: string) {
 function getStatusLabel(status: string) {
   switch (status) {
     case 'pending_acceptance':
-      return 'Pendiente de aceptación';
+      return 'Pendiente de aceptación del café';
     case 'accepted':
       return 'Aceptada';
     case 'rejected':
@@ -132,6 +138,8 @@ export default function ClientHomePage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [orderActionError, setOrderActionError] = useState<string | null>(null);
+  const [orderActionFeedback, setOrderActionFeedback] = useState<string | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -297,6 +305,7 @@ export default function ClientHomePage() {
   async function onPlaceOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setOrderActionError(null);
+    setOrderActionFeedback(null);
 
     const response = await fetch('/api/orders', {
       method: 'POST',
@@ -326,7 +335,10 @@ export default function ClientHomePage() {
   }
 
   async function onCancelOrder(orderId: string) {
+    setCancellingOrderId(orderId);
     setOrderActionError(null);
+    setOrderActionFeedback(null);
+
     const response = await fetch(`/api/orders/${orderId}/cancel`, {
       method: 'POST',
       headers: {
@@ -336,11 +348,18 @@ export default function ClientHomePage() {
     });
     const payload = await response.json();
 
+    setCancellingOrderId(null);
+
     if (!response.ok) {
       setOrderActionError(payload.error ?? 'No se pudo cancelar la orden.');
       return;
     }
 
+    setOrderActionFeedback(
+      payload.transitionApplied === false
+        ? 'La orden ya estaba cancelada; se actualizó el estado mostrado.'
+        : 'Orden cancelada correctamente.',
+    );
     await Promise.all([loadWalletData(), loadOrders()]);
   }
 
@@ -467,14 +486,16 @@ export default function ClientHomePage() {
       <section style={{ border: '1px solid #ddd', padding: 16 }}>
         <h2>Mis órdenes recientes</h2>
         {ordersError ? <p>{ordersError}</p> : null}
+        {orderActionFeedback ? <p>{orderActionFeedback}</p> : null}
         {orders.length === 0 ? (
           <p>No hay órdenes todavía.</p>
         ) : (
           <ul style={{ display: 'grid', gap: 12, paddingLeft: 20 }}>
             {orders.map((order) => {
-              const canCancel =
-                order.status === 'pending_acceptance' &&
-                Date.now() - new Date(order.placedAt).getTime() <= 5 * 60 * 1000;
+              const cancellationDeadlineMs = new Date(order.placedAt).getTime() + 5 * 60 * 1000;
+              const remainingMs = cancellationDeadlineMs - Date.now();
+              const canCancel = order.status === 'pending_acceptance' && remainingMs > 0;
+              const remainingWholeMinutes = Math.max(0, Math.ceil(remainingMs / 60000));
 
               return (
                 <li key={order.id}>
@@ -482,17 +503,29 @@ export default function ClientHomePage() {
                   <div>Orden {order.id}</div>
                   <div>Tienda: {order.storeName}</div>
                   <div>Creada: {formatDateTime(order.placedAt)}</div>
+                  <div>Aceptada: {order.acceptedAt ? formatDateTime(order.acceptedAt) : '—'}</div>
+                  <div>Lista: {order.readyAt ? formatDateTime(order.readyAt) : '—'}</div>
+                  <div>Completada: {order.completedAt ? formatDateTime(order.completedAt) : '—'}</div>
                   <div>
                     Items:{' '}
                     {order.items
                       .map((item) => `${item.itemNameSnapshot} x${item.quantity}`)
                       .join(', ')}
                   </div>
+                  {order.status === 'pending_acceptance' ? (
+                    <div>
+                      Ventana de cancelación: {canCancel ? `vigente por ~${remainingWholeMinutes} min.` : 'expirada.'}
+                    </div>
+                  ) : null}
                   {order.rejectionReason ? <div>Motivo rechazo: {order.rejectionReason}</div> : null}
                   {order.cancellationReason ? <div>Motivo cancelación: {order.cancellationReason}</div> : null}
                   {canCancel ? (
-                    <button type="button" onClick={() => onCancelOrder(order.id)}>
-                      Cancelar dentro de 5 minutos
+                    <button
+                      type="button"
+                      onClick={() => onCancelOrder(order.id)}
+                      disabled={cancellingOrderId === order.id}
+                    >
+                      {cancellingOrderId === order.id ? 'Cancelando…' : 'Cancelar dentro de 5 minutos'}
                     </button>
                   ) : null}
                 </li>
