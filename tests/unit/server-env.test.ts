@@ -15,7 +15,6 @@ describe('server env domain getters', () => {
     };
     delete process.env.PHONE_AUTH_PROVIDER;
     delete process.env.PHONE_AUTH_API_KEY;
-    delete process.env.INTERNAL_API_SECRET;
 
     const { getDatabaseEnv } = await import('@/server/env');
 

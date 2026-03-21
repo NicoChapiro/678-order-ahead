@@ -51,7 +51,6 @@ Variables mínimas:
 - `DATABASE_URL`
 - `PHONE_AUTH_PROVIDER`
 - `PHONE_AUTH_API_KEY`
-- `INTERNAL_API_SECRET`
 
 ## PWA durante estabilización
 
@@ -102,13 +101,3 @@ Comando:
 
 El script crea el owner sólo si no existe uno previo.
 
-## Bootstrap remoto temporal del primer owner
-
-Endpoint temporal para uso interno desde el entorno desplegado:
-
-- `POST /api/internal/bootstrap-owner`
-- Requiere header `x-internal-secret` con el valor de `INTERNAL_API_SECRET`.
-- Usa `DATABASE_URL`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD` y `ADMIN_BOOTSTRAP_NAME` configurados en Vercel.
-- Debe usarse sólo una vez para crear el primer owner.
-- Si ya existe un owner, responde sin crear otro usuario.
-- El endpoint debe eliminarse en un PR de limpieza después del bootstrap exitoso.
