@@ -16,21 +16,26 @@ export default function AdminLoginPage() {
     setIsSubmitting(true);
     setError(null);
 
-    const response = await fetch('/api/admin/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
+    try {
+      const response = await fetch('/api/admin/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? 'Could not sign in.');
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setError(payload.error ?? 'Could not sign in.');
+        return;
+      }
+
+      router.push('/admin');
+      router.refresh();
+    } catch {
+      setError('Could not sign in.');
+    } finally {
       setIsSubmitting(false);
-      return;
     }
-
-    router.push('/admin');
-    router.refresh();
   }
 
   return (
