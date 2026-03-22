@@ -3,44 +3,34 @@ import { z } from 'zod';
 import { customerAuthRepository } from '@/server/modules/customer-auth/repository';
 import {
   CustomerAuthError,
-  CustomerAuthValidationError,
   requireAuthenticatedCustomerSession,
-  resolveCustomerIdentifierReference,
 } from '@/server/modules/customer-auth/service';
 import { walletRepository } from '@/server/modules/wallet/repository';
 import { getWalletSummary, WalletValidationError } from '@/server/modules/wallet/service';
 
 const paramsSchema = z.object({
-  customerKey: z.string().trim().min(1).max(120),
+  customerKey: z.literal('me'),
 });
 
-export async function GET(request: NextRequest, context: { params: Promise<{ customerKey: string }> }) {
+export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ customerKey: string }> },
+) {
   const params = paramsSchema.safeParse(await context.params);
   if (!params.success) {
-    return NextResponse.json({ error: 'Invalid customer key.' }, { status: 400 });
+    return NextResponse.json({ error: 'No encontramos esa wallet.' }, { status: 404 });
   }
 
   try {
-    let customerIdentifier = params.data.customerKey;
-
-    if (customerIdentifier === 'me') {
-      const authenticatedSession = await requireAuthenticatedCustomerSession(customerAuthRepository, request);
-      customerIdentifier = authenticatedSession.customer.id;
-    } else {
-      customerIdentifier = await resolveCustomerIdentifierReference(
-        customerAuthRepository,
-        customerIdentifier,
-      );
-    }
-
-    const summary = await getWalletSummary(walletRepository, customerIdentifier);
+    const authenticatedSession = await requireAuthenticatedCustomerSession(customerAuthRepository, request);
+    const summary = await getWalletSummary(walletRepository, authenticatedSession.customer.id);
     return NextResponse.json(summary);
   } catch (error) {
     if (error instanceof CustomerAuthError) {
       return NextResponse.json({ error: error.message }, { status: 401 });
     }
 
-    if (error instanceof CustomerAuthValidationError || error instanceof WalletValidationError) {
+    if (error instanceof WalletValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 

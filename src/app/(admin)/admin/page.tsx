@@ -368,8 +368,8 @@ export default function AdminHomePage() {
 
     setWalletLoading(true);
     const [summaryResponse, transactionsResponse] = await Promise.all([
-      fetch(`/api/wallet/${encodeURIComponent(normalizedCustomerKey)}`, { cache: 'no-store' }),
-      fetch(`/api/wallet/${encodeURIComponent(normalizedCustomerKey)}/transactions`, {
+      fetch(`/api/admin/wallets/${encodeURIComponent(normalizedCustomerKey)}`, { cache: 'no-store' }),
+      fetch(`/api/admin/wallets/${encodeURIComponent(normalizedCustomerKey)}/transactions`, {
         cache: 'no-store',
       }),
     ]);

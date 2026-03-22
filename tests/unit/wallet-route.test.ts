@@ -4,9 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const getWalletSummary = vi.fn();
 const listWalletTransactions = vi.fn();
 const requireAuthenticatedCustomerSession = vi.fn();
-const resolveCustomerIdentifierReference = vi.fn();
 class MockCustomerAuthError extends Error {}
-class MockCustomerAuthValidationError extends Error {}
 class MockWalletValidationError extends Error {}
 
 vi.mock('@/server/modules/customer-auth/repository', () => ({
@@ -19,9 +17,7 @@ vi.mock('@/server/modules/wallet/repository', () => ({
 
 vi.mock('@/server/modules/customer-auth/service', () => ({
   CustomerAuthError: MockCustomerAuthError,
-  CustomerAuthValidationError: MockCustomerAuthValidationError,
   requireAuthenticatedCustomerSession,
-  resolveCustomerIdentifierReference,
 }));
 
 vi.mock('@/server/modules/wallet/service', () => ({
@@ -36,7 +32,6 @@ describe('wallet routes', () => {
     requireAuthenticatedCustomerSession.mockResolvedValue({
       customer: { id: 'customer-1', phoneNumber: '+56912345678' },
     });
-    resolveCustomerIdentifierReference.mockResolvedValue('customer-lookup');
   });
 
   it('loads the authenticated customer wallet summary from the me endpoint', async () => {
@@ -54,21 +49,19 @@ describe('wallet routes', () => {
     expect(payload.currentBalance).toBe(7000);
   });
 
-  it('resolves phone-based admin wallet lookups without exposing customer keys in the UI', async () => {
-    const summaryRoute = await import('@/app/api/wallet/[customerKey]/route');
-    getWalletSummary.mockResolvedValue({ currentBalance: 9500, wallet: { customerIdentifier: 'customer-lookup' } });
+  it('rejects explicit customer identifiers from the customer-facing wallet summary route', async () => {
+    const { GET } = await import('@/app/api/wallet/[customerKey]/route');
 
-    const response = await summaryRoute.GET(
+    const response = await GET(
       new NextRequest('http://localhost/api/wallet/%2B56912345678'),
       { params: Promise.resolve({ customerKey: '+56912345678' }) },
     );
+    const payload = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(resolveCustomerIdentifierReference).toHaveBeenCalledWith(
-      expect.anything(),
-      '+56912345678',
-    );
-    expect(getWalletSummary).toHaveBeenCalledWith(expect.anything(), 'customer-lookup');
+    expect(response.status).toBe(404);
+    expect(payload).toEqual({ error: 'No encontramos esa wallet.' });
+    expect(requireAuthenticatedCustomerSession).not.toHaveBeenCalled();
+    expect(getWalletSummary).not.toHaveBeenCalled();
   });
 
   it('loads wallet transactions for the authenticated customer', async () => {
@@ -83,6 +76,21 @@ describe('wallet routes', () => {
     expect(response.status).toBe(200);
     expect(listWalletTransactions).toHaveBeenCalledWith(expect.anything(), 'customer-1');
     expect(payload.transactions).toEqual([{ id: 'entry-1' }]);
+  });
+
+  it('rejects explicit customer identifiers from the customer-facing wallet transactions route', async () => {
+    const { GET } = await import('@/app/api/wallet/[customerKey]/transactions/route');
+
+    const response = await GET(
+      new NextRequest('http://localhost/api/wallet/customer-2/transactions'),
+      { params: Promise.resolve({ customerKey: 'customer-2' }) },
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(payload).toEqual({ error: 'No encontramos esa wallet.' });
+    expect(requireAuthenticatedCustomerSession).not.toHaveBeenCalled();
+    expect(listWalletTransactions).not.toHaveBeenCalled();
   });
 
   it('returns 401 when a me wallet lookup has no authenticated customer session', async () => {
