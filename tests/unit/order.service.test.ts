@@ -18,6 +18,7 @@ import {
   retryOrderNotification,
 } from '@/server/modules/orders/service';
 import type {
+  ClaimInternalNotificationRetryInput,
   CreateOrderEventInput,
   CreateOrderInput,
   CreateOrderItemInput,
@@ -251,6 +252,29 @@ class InMemoryOrderRepository implements OrderRepository {
     return notification;
   }
 
+  async claimInternalNotificationRetry(input: ClaimInternalNotificationRetryInput) {
+    const notification =
+      this.orderNotifications.find(
+        (entry) =>
+          entry.id === input.notificationId &&
+          entry.orderId === input.orderId &&
+          entry.channel === 'internal' &&
+          entry.status === 'failed',
+      ) ?? null;
+
+    if (!notification) {
+      return null;
+    }
+
+    notification.status = 'pending';
+    notification.failureReason = null;
+    notification.processedAt = null;
+    notification.attemptCount += 1;
+    notification.updatedAt = input.updatedAt;
+
+    return notification;
+  }
+
   async updateOrderNotification(input: UpdateOrderNotificationInput) {
     const notification = this.orderNotifications.find((entry) => entry.id === input.notificationId) ?? null;
     if (!notification) {
@@ -377,6 +401,24 @@ class InMemoryOrderRepository implements OrderRepository {
 
   async runInTransaction<T>(callback: (repository: OrderRepository) => Promise<T>): Promise<T> {
     return callback(this);
+  }
+}
+
+class ConcurrentRetryOrderRepository extends InMemoryOrderRepository {
+  private claimAttempts = 0;
+  private releaseClaims!: () => void;
+  private readonly claimGate = new Promise<void>((resolve) => {
+    this.releaseClaims = resolve;
+  });
+
+  override async claimInternalNotificationRetry(input: ClaimInternalNotificationRetryInput) {
+    this.claimAttempts += 1;
+    if (this.claimAttempts === 2) {
+      this.releaseClaims();
+    }
+
+    await this.claimGate;
+    return super.claimInternalNotificationRetry(input);
   }
 }
 
@@ -657,6 +699,120 @@ describe('order service', () => {
         notificationId: 'notification-missing',
       }),
     ).rejects.toBeInstanceOf(OrderNotFoundError);
+  });
+
+  it('concurrent retries only allow one claimed internal retry attempt', async () => {
+    const concurrentRepository = new ConcurrentRetryOrderRepository();
+    const wallet = await concurrentRepository.createWallet({
+      customerIdentifier: 'demo-wallet-customer',
+      currencyCode: 'CLP',
+    });
+    await concurrentRepository.createLedgerEntry({
+      walletId: wallet.id,
+      entryType: 'topup_cashier',
+      amountSigned: 10000,
+      currencyCode: 'CLP',
+      status: 'posted',
+      referenceType: 'cashier_topup',
+      referenceId: 'seed',
+    });
+
+    const order = await createOrder(concurrentRepository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+    const accepted = await acceptOrder(concurrentRepository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
+
+    await concurrentRepository.updateOrderNotification({
+      notificationId: accepted.notification!.id,
+      status: 'failed',
+      failureReason: 'Temporary internal processing error.',
+      attemptCount: 1,
+      processedAt: accepted.notification!.processedAt,
+      updatedAt: '2026-01-01T00:10:00.000Z',
+    });
+
+    const results = await Promise.allSettled([
+      retryOrderNotification(concurrentRepository, {
+        orderId: order.id,
+        notificationId: accepted.notification!.id,
+      }),
+      retryOrderNotification(concurrentRepository, {
+        orderId: order.id,
+        notificationId: accepted.notification!.id,
+      }),
+    ]);
+
+    const fulfilled = results.filter(
+      (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof retryOrderNotification>>> =>
+        result.status === 'fulfilled',
+    );
+    const rejected = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(fulfilled[0].value.notification).toMatchObject({
+      id: accepted.notification!.id,
+      status: 'sent',
+      attemptCount: 2,
+    });
+    expect(rejected[0].reason).toBeInstanceOf(OrderNotificationRetryError);
+
+    const reloadedOrder = await concurrentRepository.getOrderById(order.id);
+    expect(reloadedOrder?.notifications.find((entry) => entry.id === accepted.notification!.id)).toMatchObject({
+      status: 'sent',
+      attemptCount: 2,
+      failureReason: null,
+    });
+  });
+
+  it('retry rejects non-internal channels without mutating their failed state', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+
+    const smsNotification = await repository.createOrderNotification({
+      orderId: order.id,
+      notificationType: 'order_ready',
+      channel: 'sms',
+      status: 'failed',
+      recipientCustomerIdentifier: order.customerIdentifier,
+      payloadJson: {
+        orderId: order.id,
+        storeCode: order.storeCode,
+        customerIdentifier: order.customerIdentifier,
+      },
+      failureReason: 'Provider timeout.',
+      attemptCount: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      processedAt: '2026-01-01T00:01:00.000Z',
+      updatedAt: '2026-01-01T00:01:00.000Z',
+    });
+
+    await expect(
+      retryOrderNotification(repository, {
+        orderId: order.id,
+        notificationId: smsNotification.id,
+      }),
+    ).rejects.toBeInstanceOf(OrderNotificationRetryError);
+
+    const reloadedOrder = await repository.getOrderById(order.id);
+    expect(reloadedOrder?.notifications.find((entry) => entry.id === smsNotification.id)).toMatchObject({
+      id: smsNotification.id,
+      channel: 'sms',
+      status: 'failed',
+      attemptCount: 1,
+      failureReason: 'Provider timeout.',
+    });
   });
 
   it('duplicate admin actions do not corrupt state', async () => {

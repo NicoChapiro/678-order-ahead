@@ -95,12 +95,25 @@ function buildNotificationPayload(order: OrderDetail, extras?: Record<string, un
   };
 }
 
+function ensureInternalNotificationChannel(notification: OrderNotificationRecord) {
+  if (notification.channel !== 'internal') {
+    throw new OrderNotificationRetryError(
+      `Notification '${notification.id}' uses channel '${notification.channel}' and cannot be processed by the internal notification processor.`,
+    );
+  }
+}
+
 async function processInternalNotification(
   repository: OrderRepository,
   notification: OrderNotificationRecord,
+  options?: { attemptAlreadyCounted?: boolean },
 ): Promise<OrderNotificationRecord> {
+  ensureInternalNotificationChannel(notification);
+
   const processedAt = new Date().toISOString();
-  const attemptCount = notification.attemptCount + 1;
+  const attemptCount = options?.attemptAlreadyCounted
+    ? notification.attemptCount
+    : notification.attemptCount + 1;
   const payload = notification.payloadJson ?? {};
 
   const requiredFields = ['orderId', 'storeCode', 'customerIdentifier'] as const;
@@ -213,12 +226,20 @@ async function reloadActionResult(
   };
 }
 
-function ensureRetryableNotification(order: OrderDetail, notificationId: string) {
+function requireOrderNotification(order: OrderDetail, notificationId: string) {
   const notification = order.notifications.find((entry) => entry.id === notificationId) ?? null;
 
   if (!notification) {
     throw new OrderNotFoundError('Notification was not found for this order.');
   }
+
+  return notification;
+}
+
+function ensureRetryableNotification(order: OrderDetail, notificationId: string) {
+  const notification = requireOrderNotification(order, notificationId);
+
+  ensureInternalNotificationChannel(notification);
 
   if (notification.status !== 'failed') {
     throw new OrderNotificationRetryError(
@@ -637,8 +658,25 @@ export async function retryOrderNotification(
 ): Promise<OrderActionResult> {
   return repository.runInTransaction(async (tx) => {
     const order = ensureOrder(await tx.getOrderById(input.orderId));
-    const notification = ensureRetryableNotification(order, input.notificationId);
-    const retriedNotification = await processInternalNotification(tx, notification);
+    ensureRetryableNotification(order, input.notificationId);
+
+    const claimedNotification = await tx.claimInternalNotificationRetry({
+      orderId: input.orderId,
+      notificationId: input.notificationId,
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (!claimedNotification) {
+      const refreshedOrder = ensureOrder(await tx.getOrderById(input.orderId));
+      ensureRetryableNotification(refreshedOrder, input.notificationId);
+      throw new OrderNotificationRetryError(
+        `Notification '${input.notificationId}' is already being retried.`,
+      );
+    }
+
+    const retriedNotification = await processInternalNotification(tx, claimedNotification, {
+      attemptAlreadyCounted: true,
+    });
 
     return reloadActionResult(tx, order.id, false, order.lastEvent, retriedNotification);
   });
