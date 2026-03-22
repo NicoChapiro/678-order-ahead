@@ -7,7 +7,6 @@ import {
   EmptyState,
   InlineFeedback,
   LoadingBlock,
-  PageHeader,
   SectionCard,
   StatGrid,
   StatItem,
@@ -16,6 +15,9 @@ import {
 } from '@/components/ui/dashboard';
 
 type StoreCode = 'store_1';
+
+const INTERNAL_CUSTOMER_IDENTIFIER = 'demo-wallet-customer';
+const ORDER_REFRESH_INTERVAL_MS = 15000;
 
 type Availability = {
   storeCode: StoreCode;
@@ -46,28 +48,6 @@ type CustomerMenu = {
   storeCode: StoreCode;
   storeName: string;
   items: CustomerMenuItem[];
-};
-
-type WalletSummary = {
-  wallet: {
-    id: string;
-    customerIdentifier: string;
-    currencyCode: 'CLP';
-    createdAt: string;
-    updatedAt: string;
-  };
-  currentBalance: number;
-};
-
-type WalletTransaction = {
-  id: string;
-  entryType: string;
-  amountSigned: number;
-  status: string;
-  referenceType: string | null;
-  referenceId: string | null;
-  note: string | null;
-  createdAt: string;
 };
 
 type Order = {
@@ -116,22 +96,73 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+function getCalmErrorMessage(error: unknown, fallback: string) {
+  if (typeof error !== 'string') {
+    return fallback;
+  }
+
+  const normalizedError = error.trim();
+  if (!normalizedError) {
+    return fallback;
+  }
+
+  const loweredError = normalizedError.toLowerCase();
+  if (
+    loweredError.includes('unexpected error') ||
+    loweredError.includes('internal server error') ||
+    loweredError.includes('failed to fetch') ||
+    loweredError.includes('network') ||
+    loweredError.includes('fetch failed')
+  ) {
+    return fallback;
+  }
+
+  return normalizedError;
+}
+
+function getAvailabilityMessage(availability: Availability | null) {
+  if (!availability) {
+    return 'Estamos revisando si la tienda está lista para recibir tu pedido.';
+  }
+
+  if (availability.isOrderAheadEnabled) {
+    return 'Puedes pedir ahora y pasar a retirar cuando te avisemos.';
+  }
+
+  switch (availability.disabledReasonCode) {
+    case 'manual_pause':
+      return 'La tienda pausó temporalmente los pedidos online.';
+    case 'equipment_issue':
+      return 'Estamos resolviendo un problema de preparación en tienda.';
+    case 'staffing_issue':
+      return 'La tienda está con menor capacidad para preparar pedidos ahora.';
+    case 'inventory_issue':
+      return 'Faltan productos para atender pedidos con normalidad.';
+    case 'system_issue':
+      return 'Estamos teniendo un problema temporal para recibir pedidos.';
+    case 'other':
+      return availability.disabledComment ?? 'En este momento la tienda no puede recibir pedidos.';
+    default:
+      return availability.disabledComment ?? 'En este momento la tienda no puede recibir pedidos.';
+  }
+}
+
 function getStatusLabel(status: string) {
   switch (status) {
     case 'pending_acceptance':
-      return 'Pendiente';
+      return 'Recibido';
     case 'accepted':
-      return 'Aceptada';
-    case 'rejected':
-      return 'Rechazada';
-    case 'cancelled_by_customer':
-      return 'Cancelada';
+      return 'En preparación';
     case 'ready_for_pickup':
-      return 'Lista';
+      return 'Listo para retiro';
+    case 'rejected':
+      return 'Rechazado';
+    case 'cancelled_by_customer':
+      return 'Cancelado';
     case 'completed':
-      return 'Completada';
+      return 'Retirado';
     case 'no_show':
-      return 'No-show';
+      return 'No retirado';
     default:
       return status;
   }
@@ -142,8 +173,8 @@ function getStatusTone(status: string) {
     case 'pending_acceptance':
       return 'warning';
     case 'accepted':
-    case 'ready_for_pickup':
       return 'info';
+    case 'ready_for_pickup':
     case 'completed':
     case 'available':
       return 'success';
@@ -157,21 +188,62 @@ function getStatusTone(status: string) {
   }
 }
 
+function getTrackingHeadline(order: Order) {
+  switch (order.status) {
+    case 'pending_acceptance':
+      return 'Tu pedido ya entró a la tienda.';
+    case 'accepted':
+      return 'Tu pedido se está preparando.';
+    case 'ready_for_pickup':
+      return 'Tu pedido está listo para retiro.';
+    case 'rejected':
+      return 'No pudimos preparar este pedido.';
+    case 'cancelled_by_customer':
+      return 'Este pedido fue cancelado.';
+    case 'completed':
+      return 'Pedido retirado con éxito.';
+    case 'no_show':
+      return 'El pedido no fue retirado a tiempo.';
+    default:
+      return 'Estamos actualizando tu pedido.';
+  }
+}
+
+function getTrackingSupport(order: Order) {
+  switch (order.status) {
+    case 'pending_acceptance':
+      return `Recibido ${formatDateTime(order.placedAt)}.`;
+    case 'accepted':
+      return order.acceptedAt
+        ? `En preparación desde ${formatDateTime(order.acceptedAt)}.`
+        : 'La tienda confirmó tu pedido y ya comenzó a prepararlo.';
+    case 'ready_for_pickup':
+      return order.readyAt
+        ? `Listo para retiro desde ${formatDateTime(order.readyAt)}.`
+        : 'Pasa por la tienda cuando te acomode.';
+    case 'rejected':
+      return order.rejectionReason ?? 'La tienda rechazó el pedido.';
+    case 'cancelled_by_customer':
+      return order.cancellationReason ?? 'Cancelaste el pedido desde esta vista.';
+    case 'completed':
+      return order.completedAt
+        ? `Retirado ${formatDateTime(order.completedAt)}.`
+        : 'El pedido ya fue retirado.';
+    case 'no_show':
+      return order.noShowAt
+        ? `Marcado como no retirado ${formatDateTime(order.noShowAt)}.`
+        : 'La tienda marcó el pedido como no retirado.';
+    default:
+      return 'Sigue aquí el estado más reciente de tu pedido.';
+  }
+}
+
 export default function ClientHomePage() {
   const [storeCode, setStoreCode] = useState<StoreCode>('store_1');
   const [availability, setAvailability] = useState<Availability | null>(null);
   const [menu, setMenu] = useState<CustomerMenu | null>(null);
   const [storeLoading, setStoreLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [customerKey, setCustomerKey] = useState('demo-wallet-customer');
-  const [walletSummary, setWalletSummary] = useState<WalletSummary | null>(null);
-  const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
-  const [walletError, setWalletError] = useState<string | null>(null);
-  const [walletLoading, setWalletLoading] = useState(false);
-  const [walletLookupPending, setWalletLookupPending] = useState(false);
-  const [transferAmount, setTransferAmount] = useState('8000');
-  const [transferReference, setTransferReference] = useState('TRX-DEMO-0002');
-  const [transferPending, setTransferPending] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState<string | null>(null);
@@ -205,7 +277,12 @@ export default function ClientHomePage() {
       if (!availabilityResponse.ok) {
         setAvailability(null);
         setMenu(null);
-        setError(availabilityPayload.error ?? 'Could not load availability.');
+        setError(
+          getCalmErrorMessage(
+            availabilityPayload.error,
+            'La tienda no respondió. Vuelve a intentarlo en un momento.',
+          ),
+        );
         setStoreLoading(false);
         return;
       }
@@ -213,7 +290,9 @@ export default function ClientHomePage() {
       if (!menuResponse.ok) {
         setAvailability(availabilityPayload.availability as Availability);
         setMenu(null);
-        setError(menuPayload.error ?? 'Could not load menu.');
+        setError(
+          getCalmErrorMessage(menuPayload.error, 'No pudimos cargar el menú. Intenta de nuevo.'),
+        );
         setStoreLoading(false);
         return;
       }
@@ -237,87 +316,66 @@ export default function ClientHomePage() {
     };
   }, [storeCode]);
 
-  async function loadWalletData(nextCustomerKey = customerKey) {
-    const normalizedCustomerKey = nextCustomerKey.trim();
-    if (!normalizedCustomerKey) {
-      setWalletError('Debes ingresar una customer key.');
-      return;
-    }
-
-    setWalletLoading(true);
-    const [summaryResponse, transactionsResponse] = await Promise.all([
-      fetch(`/api/wallet/${encodeURIComponent(normalizedCustomerKey)}`, { cache: 'no-store' }),
-      fetch(`/api/wallet/${encodeURIComponent(normalizedCustomerKey)}/transactions`, {
-        cache: 'no-store',
-      }),
-    ]);
-    const [summaryPayload, transactionsPayload] = await Promise.all([
-      summaryResponse.json(),
-      transactionsResponse.json(),
-    ]);
-
-    if (!summaryResponse.ok) {
-      setWalletSummary(null);
-      setWalletTransactions([]);
-      setWalletError(summaryPayload.error ?? 'No se pudo cargar la wallet.');
-      setWalletLoading(false);
-      return;
-    }
-
-    if (!transactionsResponse.ok) {
-      setWalletSummary(summaryPayload as WalletSummary);
-      setWalletTransactions([]);
-      setWalletError(transactionsPayload.error ?? 'No se pudieron cargar los movimientos.');
-      setWalletLoading(false);
-      return;
-    }
-
-    setWalletSummary(summaryPayload as WalletSummary);
-    setWalletTransactions((transactionsPayload.transactions as WalletTransaction[]) ?? []);
-    setWalletError(null);
-    setWalletLoading(false);
-  }
-
-  async function loadOrders(nextCustomerKey = customerKey) {
-    const normalizedCustomerKey = nextCustomerKey.trim();
-    if (!normalizedCustomerKey) {
-      setOrders([]);
-      setOrdersError('Debes ingresar una customer key.');
-      return;
-    }
-
+  async function loadOrders() {
     setOrdersLoading(true);
-    const response = await fetch(
-      `/api/customers/${encodeURIComponent(normalizedCustomerKey)}/orders`,
-      {
-        cache: 'no-store',
-      },
-    );
-    const payload = await response.json();
 
-    if (!response.ok) {
+    try {
+      const response = await fetch(
+        `/api/customers/${encodeURIComponent(INTERNAL_CUSTOMER_IDENTIFIER)}/orders`,
+        {
+          cache: 'no-store',
+        },
+      );
+      const payload = (await response.json()) as { orders?: Order[]; error?: string };
+
+      if (!response.ok) {
+        setOrders([]);
+        setOrdersError(
+          getCalmErrorMessage(payload.error, 'No pudimos revisar el estado de tu pedido.'),
+        );
+        return;
+      }
+
+      setOrders(Array.isArray(payload.orders) ? payload.orders : []);
+      setOrdersError(null);
+    } catch {
       setOrders([]);
-      setOrdersError(payload.error ?? 'No se pudieron cargar las órdenes.');
+      setOrdersError('No pudimos revisar el estado de tu pedido.');
+    } finally {
       setOrdersLoading(false);
-      return;
     }
-
-    setOrders((payload.orders as Order[]) ?? []);
-    setOrdersError(null);
-    setOrdersLoading(false);
   }
 
   useEffect(() => {
-    void Promise.all([loadWalletData('demo-wallet-customer'), loadOrders('demo-wallet-customer')]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void loadOrders();
+
+    const intervalId = window.setInterval(() => {
+      void loadOrders();
+    }, ORDER_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, []);
+
+  const visibleMenuItems = useMemo(
+    () =>
+      [...(menu?.items ?? [])]
+        .filter((item) => item.isVisible && item.baseIsActive)
+        .sort((left, right) => {
+          const leftOrder = left.sortOrder ?? Number.MAX_SAFE_INTEGER;
+          const rightOrder = right.sortOrder ?? Number.MAX_SAFE_INTEGER;
+          return leftOrder - rightOrder || left.name.localeCompare(right.name, 'es');
+        }),
+    [menu],
+  );
 
   const selectedItems = useMemo(
     () =>
-      (menu?.items ?? [])
+      visibleMenuItems
         .map((item) => ({ item, quantity: quantities[item.menuItemId] ?? 0 }))
         .filter((entry) => entry.quantity > 0),
-    [menu, quantities],
+    [visibleMenuItems, quantities],
   );
 
   const orderTotal = selectedItems.reduce(
@@ -325,43 +383,25 @@ export default function ClientHomePage() {
     0,
   );
 
-  async function onLookupWallet(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setWalletLookupPending(true);
-    await Promise.all([loadWalletData(), loadOrders()]);
-    setWalletLookupPending(false);
-  }
+  const sortedOrders = useMemo(
+    () => [...orders].sort((left, right) => +new Date(right.placedAt) - +new Date(left.placedAt)),
+    [orders],
+  );
 
-  async function onTransferRequest(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setTransferPending(true);
-    const response = await fetch(
-      `/api/wallet/${encodeURIComponent(customerKey.trim())}/topup-transfer-request`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          amount: Number(transferAmount),
-          submittedReference: transferReference,
-          note: 'Solicitud de recarga por transferencia',
-        }),
-      },
-    );
-    const payload = await response.json();
+  const featuredOrder = useMemo(
+    () =>
+      sortedOrders.find((order) =>
+        ['pending_acceptance', 'accepted', 'ready_for_pickup'].includes(order.status),
+      ) ??
+      sortedOrders[0] ??
+      null,
+    [sortedOrders],
+  );
 
-    if (!response.ok) {
-      setWalletError(payload.error ?? 'No se pudo crear la solicitud de transferencia.');
-      setTransferPending(false);
-      return;
-    }
-
-    setWalletError(null);
-    setTransferAmount('8000');
-    await loadWalletData();
-    setTransferPending(false);
-  }
+  const recentOrders = useMemo(
+    () => sortedOrders.filter((order) => order.id !== featuredOrder?.id).slice(0, 3),
+    [featuredOrder?.id, sortedOrders],
+  );
 
   async function onPlaceOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -375,7 +415,7 @@ export default function ClientHomePage() {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        customerIdentifier: customerKey.trim(),
+        customerIdentifier: INTERNAL_CUSTOMER_IDENTIFIER,
         storeCode,
         items: selectedItems.map(({ item, quantity }) => ({
           menuItemId: item.menuItemId,
@@ -386,7 +426,9 @@ export default function ClientHomePage() {
     const payload = await response.json();
 
     if (!response.ok) {
-      setOrderActionError(payload.error ?? 'No se pudo crear la orden.');
+      setOrderActionError(
+        getCalmErrorMessage(payload.error, 'No pudimos confirmar tu pedido. Intenta de nuevo.'),
+      );
       setPlacingOrder(false);
       return;
     }
@@ -399,10 +441,9 @@ export default function ClientHomePage() {
         >,
       );
     }
-    setOrderActionFeedback(
-      'Orden creada correctamente. Revisa el tracking y el balance actualizado.',
-    );
-    await Promise.all([loadWalletData(), loadOrders()]);
+
+    setOrderActionFeedback('Pedido enviado. Aquí mismo verás cuándo esté listo para retiro.');
+    await loadOrders();
     setPlacingOrder(false);
   }
 
@@ -423,487 +464,332 @@ export default function ClientHomePage() {
     setCancellingOrderId(null);
 
     if (!response.ok) {
-      setOrderActionError(payload.error ?? 'No se pudo cancelar la orden.');
+      setOrderActionError(
+        getCalmErrorMessage(payload.error, 'No pudimos cancelar tu pedido. Intenta de nuevo.'),
+      );
       return;
     }
 
     setOrderActionFeedback(
       payload.transitionApplied === false
-        ? 'La orden ya estaba cancelada; se actualizó el estado mostrado.'
-        : 'Orden cancelada correctamente.',
+        ? 'Actualizamos el estado más reciente de tu pedido.'
+        : 'Pedido cancelado correctamente.',
     );
-    await Promise.all([loadWalletData(), loadOrders()]);
+    await loadOrders();
   }
 
   return (
     <AppShell>
-      <PageHeader>
-        <div className="summary-card__title-row">
-          <div className="stack">
-            <span className="summary-card__eyebrow">Experiencia cliente</span>
-            <h1>Cliente</h1>
-            <p>
-              Wallet, order-ahead y seguimiento reciente con una interfaz más confiable, escaneable
-              y orientada a producto.
-            </p>
-          </div>
-          <StatusChip label="Vista unificada" tone="info" />
-        </div>
-      </PageHeader>
-
       <SummaryCard>
         <div className="summary-card__title-row">
           <div className="stack">
-            <span className="summary-card__eyebrow">Resumen rápido</span>
-            <h2>{availability?.storeName ?? 'Tu próxima compra'}</h2>
-            <p>
-              Todo lo importante al inicio: sucursal, disponibilidad de order-ahead y saldo para
-              comprar.
-            </p>
+            <span className="summary-card__eyebrow">Order ahead</span>
+            <h1>{availability?.storeName ?? 'Tu tienda'}</h1>
+            <p>{getAvailabilityMessage(availability)}</p>
           </div>
-          <div className="field summary-card__control">
-            <label className="field-label" htmlFor="store-select">
-              Sucursal
-            </label>
-            <select
-              id="store-select"
-              value={storeCode}
-              onChange={(event) => setStoreCode(event.target.value as StoreCode)}
-            >
-              <option value="store_1">Store 1</option>
-            </select>
+          <div className="stack" style={{ gap: '0.75rem', alignItems: 'flex-end' }}>
+            <StatusChip
+              label={availability?.isOrderAheadEnabled ? 'Disponible' : 'No disponible'}
+              tone={getStatusTone(availability?.isOrderAheadEnabled ? 'available' : 'unavailable')}
+            />
+            <div className="field summary-card__control">
+              <label className="field-label" htmlFor="store-select">
+                Tienda
+              </label>
+              <select
+                id="store-select"
+                value={storeCode}
+                onChange={(event) => setStoreCode(event.target.value as StoreCode)}
+              >
+                <option value="store_1">Store 1</option>
+              </select>
+            </div>
           </div>
         </div>
         <StatGrid>
           <StatItem
-            label="Sucursal seleccionada"
+            label="Tienda"
             value={availability?.storeName ?? storeCode}
             helper={
               availability
                 ? `Actualizado ${formatDateTime(availability.updatedAt)}`
-                : 'Sin estado todavía'
+                : 'Revisando disponibilidad'
             }
           />
           <StatItem
-            label="Order-ahead"
-            value={
-              <StatusChip
-                label={availability?.isOrderAheadEnabled ? 'Disponible' : 'No disponible'}
-                tone={getStatusTone(
-                  availability?.isOrderAheadEnabled ? 'available' : 'unavailable',
-                )}
-              />
-            }
+            label="Estado"
+            value={availability?.isOrderAheadEnabled ? 'Puedes pedir ahora' : 'No disponible ahora'}
             helper={
               availability?.isOrderAheadEnabled
-                ? 'Puedes pedir y pagar desde la wallet.'
-                : (availability?.disabledReasonCode ?? 'Aún no disponible')
+                ? 'Haz tu pedido y pasa a retirar.'
+                : 'Vuelve a intentar en unos minutos.'
             }
           />
           <StatItem
-            label="Wallet"
-            value={walletSummary ? formatClp(walletSummary.currentBalance) : '—'}
-            helper={walletSummary?.wallet.customerIdentifier ?? 'Busca tu wallet para ver saldo'}
+            label="Siguiente paso"
+            value={availability?.isOrderAheadEnabled ? 'Elige tu café' : 'Espera un momento'}
+            helper={
+              availability?.isOrderAheadEnabled
+                ? 'Agrega productos y confirma.'
+                : 'Te mostraremos aquí cuando vuelva.'
+            }
           />
         </StatGrid>
         {!availability?.isOrderAheadEnabled && availability ? (
           <InlineFeedback
             tone="warning"
-            message={`Order-ahead pausado${availability.disabledComment ? `: ${availability.disabledComment}` : '.'}`}
+            message={availability.disabledComment ?? getAvailabilityMessage(availability)}
           />
         ) : null}
+        {error ? <InlineFeedback tone="error" message={error} /> : null}
       </SummaryCard>
 
-      <div className="page-columns">
-        <div className="stack">
-          <SectionCard>
-            <CardHeader>
-              <div className="stack">
-                <h2>Mi wallet</h2>
-                <p>
-                  Saldo visible, búsqueda simple y solicitud de top-up en un bloque más claro y
-                  confiable.
-                </p>
-              </div>
-            </CardHeader>
-            <div className="surface-soft stack">
-              <p>
-                Demo sugerida: <code>demo-wallet-customer</code>
-              </p>
-              <form onSubmit={onLookupWallet} className="form-row form-row--inline">
-                <label className="field">
-                  <span className="field-label">Customer key</span>
-                  <input
-                    aria-label="Customer key"
-                    value={customerKey}
-                    onChange={(event) => setCustomerKey(event.target.value)}
-                    placeholder="customer key"
-                  />
-                </label>
-                <button
-                  className="button button--primary"
-                  type="submit"
-                  disabled={walletLookupPending}
-                >
-                  {walletLookupPending ? 'Consultando…' : 'Ver wallet y órdenes'}
-                </button>
-              </form>
-            </div>
-            {walletError ? <InlineFeedback tone="error" message={walletError} /> : null}
-            {walletLoading ? <LoadingBlock label="Actualizando balance y movimientos…" /> : null}
-            {walletSummary ? (
-              <>
-                <StatGrid>
-                  <StatItem label="Customer key" value={walletSummary.wallet.customerIdentifier} />
-                  <StatItem
-                    label="Balance actual"
-                    value={formatClp(walletSummary.currentBalance)}
-                  />
-                  <StatItem label="Moneda" value={walletSummary.wallet.currencyCode} />
-                </StatGrid>
+      <SectionCard className="section-card--order-focus">
+        <CardHeader>
+          <div className="stack">
+            <span className="summary-card__eyebrow">1. Elige y pide</span>
+            <h2>Elige tu pedido</h2>
+            <p>Agrega lo que quieras y confirma en segundos.</p>
+          </div>
+          {availability ? (
+            <StatusChip
+              label={availability.isOrderAheadEnabled ? 'Listo para pedir' : 'Pausa temporal'}
+              tone={availability.isOrderAheadEnabled ? 'success' : 'warning'}
+            />
+          ) : null}
+        </CardHeader>
+        {orderActionError ? <InlineFeedback tone="error" message={orderActionError} /> : null}
+        {orderActionFeedback ? (
+          <InlineFeedback tone="success" message={orderActionFeedback} />
+        ) : null}
+        {storeLoading ? (
+          <LoadingBlock label="Cargando menú…" />
+        ) : !menu ? (
+          <EmptyState
+            title="No pudimos cargar el menú"
+            description="Vuelve a intentar en unos minutos o cambia de tienda."
+          />
+        ) : visibleMenuItems.length === 0 ? (
+          <EmptyState
+            title="No hay productos disponibles"
+            description="Esta tienda todavía no tiene productos listos para order ahead."
+          />
+        ) : (
+          <form onSubmit={onPlaceOrder} className="stack">
+            <div className="list-grid">
+              {visibleMenuItems.map((item) => {
+                const quantity = quantities[item.menuItemId] ?? 0;
 
-                <div className="section-card compact-card" style={{ padding: '1rem' }}>
-                  <div className="stack">
-                    <h3>Solicitar top-up por transferencia</h3>
-                    <p className="helper-text">
-                      Completa la referencia para reducir errores y dejar trazabilidad del depósito.
-                    </p>
-                  </div>
-                  <form
-                    onSubmit={onTransferRequest}
-                    className="form-grid form-grid--two compact-card"
+                return (
+                  <article
+                    key={item.storeMenuItemId}
+                    className="menu-item-card compact-card menu-item-card--priority"
                   >
-                    <label className="field">
-                      <span className="field-label">Monto</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={transferAmount}
-                        onChange={(event) => setTransferAmount(event.target.value)}
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Referencia enviada</span>
-                      <input
-                        value={transferReference}
-                        onChange={(event) => setTransferReference(event.target.value)}
-                        placeholder="TRX-DEMO-0002"
-                      />
-                    </label>
-                    <button
-                      className="button button--primary"
-                      type="submit"
-                      disabled={transferPending}
-                    >
-                      {transferPending ? 'Enviando…' : 'Enviar solicitud manual'}
-                    </button>
-                  </form>
-                </div>
-              </>
-            ) : (
-              !walletLoading && (
-                <EmptyState
-                  title="Busca tu wallet"
-                  description="Ingresa tu customer key para ver saldo, historial y operar con confianza antes de pedir."
-                />
-              )
-            )}
-          </SectionCard>
-
-          <SectionCard>
-            <CardHeader>
-              <div className="stack">
-                <h2>Crear orden</h2>
-                <p>
-                  Controles de cantidad más claros, total destacado y CTA principal bien aislado.
-                </p>
-              </div>
-              {availability ? (
-                <StatusChip
-                  label={availability.isOrderAheadEnabled ? 'Sucursal activa' : 'Sucursal pausada'}
-                  tone={availability.isOrderAheadEnabled ? 'success' : 'warning'}
-                />
-              ) : null}
-            </CardHeader>
-            {error ? <InlineFeedback tone="error" message={error} /> : null}
-            {orderActionError ? <InlineFeedback tone="error" message={orderActionError} /> : null}
-            {orderActionFeedback ? (
-              <InlineFeedback tone="success" message={orderActionFeedback} />
-            ) : null}
-            {storeLoading ? (
-              <LoadingBlock label="Cargando catálogo y disponibilidad…" />
-            ) : !menu ? (
-              <EmptyState
-                title="No pudimos cargar el menú"
-                description="Reintenta más tarde o vuelve a seleccionar la sucursal."
-              />
-            ) : menu.items.length === 0 ? (
-              <EmptyState
-                title="Sin productos disponibles"
-                description="Esta sucursal todavía no tiene productos visibles para order-ahead."
-              />
-            ) : (
-              <form onSubmit={onPlaceOrder} className="stack">
-                <div className="list-grid">
-                  {menu.items.map((item) => {
-                    const quantity = quantities[item.menuItemId] ?? 0;
-                    return (
-                      <article key={item.storeMenuItemId} className="menu-item-card compact-card">
-                        <div className="menu-item-card__header">
-                          <div className="stack" style={{ gap: '0.35rem' }}>
-                            <strong>{item.name}</strong>
-                            {item.description ? (
-                              <span className="meta-text">{item.description}</span>
-                            ) : null}
-                            <div className="chip-row">
-                              <StatusChip
-                                label={item.isInStock ? 'Disponible' : 'Sin stock'}
-                                tone={item.isInStock ? 'success' : 'warning'}
-                              />
-                            </div>
-                          </div>
-                          <strong>{formatClp(item.priceAmount)}</strong>
-                        </div>
-                        <div className="toolbar transaction-meta">
-                          <div className="quantity-control" aria-label={`Cantidad de ${item.name}`}>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setQuantities((current) => ({
-                                  ...current,
-                                  [item.menuItemId]: Math.max(
-                                    0,
-                                    (current[item.menuItemId] ?? 0) - 1,
-                                  ),
-                                }))
-                              }
-                              disabled={!item.isInStock || quantity === 0}
-                            >
-                              −
-                            </button>
-                            <span className="quantity-display">{quantity}</span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setQuantities((current) => ({
-                                  ...current,
-                                  [item.menuItemId]: (current[item.menuItemId] ?? 0) + 1,
-                                }))
-                              }
-                              disabled={!item.isInStock}
-                            >
-                              +
-                            </button>
-                          </div>
-                          <span className="meta-text">
-                            {quantity > 0
-                              ? `Subtotal ${formatClp(quantity * item.priceAmount)}`
-                              : 'Aún no agregado'}
-                          </span>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-
-                <div className="surface-soft stack compact-card">
-                  <div className="toolbar transaction-meta">
-                    <div className="stack" style={{ gap: '0.2rem' }}>
-                      <span className="row-label">Total estimado</span>
-                      <strong style={{ fontSize: '1.6rem' }}>{formatClp(orderTotal)}</strong>
-                    </div>
-                    <div className="stack" style={{ gap: '0.2rem', alignItems: 'flex-end' }}>
-                      <span className="row-label">Productos seleccionados</span>
-                      <strong>{selectedItems.length}</strong>
-                    </div>
-                  </div>
-                  <button
-                    className="button button--primary button--block"
-                    type="submit"
-                    disabled={
-                      selectedItems.length === 0 ||
-                      placingOrder ||
-                      !availability?.isOrderAheadEnabled
-                    }
-                  >
-                    {placingOrder ? 'Confirmando…' : 'Confirmar orden con wallet'}
-                  </button>
-                  {!availability?.isOrderAheadEnabled ? (
-                    <span className="field-help">
-                      La sucursal debe estar disponible para poder crear una orden.
-                    </span>
-                  ) : null}
-                </div>
-              </form>
-            )}
-          </SectionCard>
-
-          <SectionCard>
-            <CardHeader>
-              <div className="stack">
-                <h2>Mis órdenes recientes</h2>
-                <p>Seguimiento más claro de estado, tiempos y ventana segura de cancelación.</p>
-              </div>
-            </CardHeader>
-            {ordersError ? <InlineFeedback tone="error" message={ordersError} /> : null}
-            {ordersLoading ? (
-              <LoadingBlock label="Cargando órdenes recientes…" />
-            ) : orders.length === 0 ? (
-              <EmptyState
-                title="Todavía no tienes órdenes"
-                description="Cuando hagas tu primer pedido aparecerá aquí con su tracking completo."
-              />
-            ) : (
-              <div className="list-grid">
-                {orders.map((order) => {
-                  const cancellationDeadlineMs = new Date(order.placedAt).getTime() + 5 * 60 * 1000;
-                  const remainingMs = cancellationDeadlineMs - Date.now();
-                  const canCancel = order.status === 'pending_acceptance' && remainingMs > 0;
-                  const remainingWholeMinutes = Math.max(0, Math.ceil(remainingMs / 60000));
-
-                  return (
-                    <article key={order.id} className="order-card compact-card">
-                      <div className="order-card__header">
-                        <div className="stack" style={{ gap: '0.4rem' }}>
-                          <div className="chip-row">
-                            <StatusChip
-                              label={getStatusLabel(order.status)}
-                              tone={getStatusTone(order.status)}
-                            />
-                            {order.status === 'pending_acceptance' ? (
-                              <StatusChip
-                                label={
-                                  canCancel
-                                    ? `Cancelable ~${remainingWholeMinutes} min`
-                                    : 'Cancelación expirada'
-                                }
-                                tone={canCancel ? 'warning' : 'muted'}
-                              />
-                            ) : null}
-                          </div>
-                          <strong>{formatClp(order.totalAmount)}</strong>
-                          <span className="meta-text">Orden {order.id}</span>
-                        </div>
-                        <div className="stack" style={{ gap: '0.3rem', maxWidth: 320 }}>
-                          <span className="row-label">Tienda</span>
-                          <strong>{order.storeName}</strong>
-                          <span className="meta-text">Creada {formatDateTime(order.placedAt)}</span>
-                        </div>
-                      </div>
-
-                      <div className="order-card__metrics">
-                        <div className="meta-block">
-                          <span className="row-label">Aceptada</span>
-                          <strong>
-                            {order.acceptedAt ? formatDateTime(order.acceptedAt) : '—'}
-                          </strong>
-                        </div>
-                        <div className="meta-block">
-                          <span className="row-label">Lista</span>
-                          <strong>{order.readyAt ? formatDateTime(order.readyAt) : '—'}</strong>
-                        </div>
-                        <div className="meta-block">
-                          <span className="row-label">Completada</span>
-                          <strong>
-                            {order.completedAt ? formatDateTime(order.completedAt) : '—'}
-                          </strong>
-                        </div>
-                        <div className="meta-block">
-                          <span className="row-label">No-show</span>
-                          <strong>{order.noShowAt ? formatDateTime(order.noShowAt) : '—'}</strong>
-                        </div>
-                      </div>
-
-                      <div className="surface-soft stack compact-card">
-                        <div className="order-items">
-                          {order.items.map((item) => (
-                            <div key={item.id} className="order-item-row">
-                              <span>
-                                {item.itemNameSnapshot} x{item.quantity}
-                              </span>
-                              <strong>{formatClp(item.lineTotalAmount)}</strong>
-                            </div>
-                          ))}
-                        </div>
-                        {order.rejectionReason ? (
-                          <InlineFeedback
-                            tone="warning"
-                            message={`Motivo rechazo: ${order.rejectionReason}`}
-                          />
+                    <div className="menu-item-card__header">
+                      <div className="stack" style={{ gap: '0.35rem' }}>
+                        <strong>{item.name}</strong>
+                        {item.description ? (
+                          <span className="meta-text">{item.description}</span>
                         ) : null}
-                        {order.cancellationReason ? (
-                          <InlineFeedback
-                            tone="warning"
-                            message={`Motivo cancelación: ${order.cancellationReason}`}
+                        <div className="chip-row">
+                          <StatusChip
+                            label={item.isInStock ? 'Disponible' : 'Sin stock'}
+                            tone={item.isInStock ? 'success' : 'warning'}
                           />
-                        ) : null}
+                        </div>
                       </div>
-
-                      {canCancel ? (
+                      <strong>{formatClp(item.priceAmount)}</strong>
+                    </div>
+                    <div className="toolbar transaction-meta">
+                      <div className="quantity-control" aria-label={`Cantidad de ${item.name}`}>
                         <button
-                          className="button button--soft-danger"
+                          className="quantity-control__button quantity-control__button--secondary"
                           type="button"
-                          onClick={() => onCancelOrder(order.id)}
-                          disabled={cancellingOrderId === order.id}
+                          onClick={() =>
+                            setQuantities((current) => ({
+                              ...current,
+                              [item.menuItemId]: Math.max(0, (current[item.menuItemId] ?? 0) - 1),
+                            }))
+                          }
+                          disabled={!item.isInStock || quantity === 0}
                         >
-                          {cancellingOrderId === order.id
-                            ? 'Cancelando…'
-                            : 'Cancelar dentro de 5 minutos'}
+                          −
                         </button>
-                      ) : null}
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </SectionCard>
-        </div>
-
-        <div className="stack">
-          <SectionCard>
-            <CardHeader>
-              <div className="stack">
-                <h2>Historial de transacciones</h2>
-                <p>Movimientos agrupados con monto, estado y referencias para generar confianza.</p>
-              </div>
-            </CardHeader>
-            {walletLoading && walletTransactions.length === 0 ? (
-              <LoadingBlock label="Cargando movimientos…" />
-            ) : walletTransactions.length === 0 ? (
-              <EmptyState
-                title="Sin movimientos todavía"
-                description="Tus top-ups y pagos aparecerán aquí apenas existan transacciones en la wallet."
-              />
-            ) : (
-              <div className="list-grid compact-list">
-                {walletTransactions.map((transaction) => (
-                  <div key={transaction.id} className="transaction-row compact-card">
-                    <div className="stack" style={{ gap: '0.35rem' }}>
-                      <div className="chip-row">
-                        <StatusChip label={transaction.entryType} tone="muted" />
-                        <StatusChip
-                          label={transaction.status}
-                          tone={getStatusTone(transaction.status)}
-                        />
+                        <span className="quantity-display">{quantity}</span>
+                        <button
+                          className="quantity-control__button quantity-control__button--primary"
+                          type="button"
+                          onClick={() =>
+                            setQuantities((current) => ({
+                              ...current,
+                              [item.menuItemId]: (current[item.menuItemId] ?? 0) + 1,
+                            }))
+                          }
+                          disabled={!item.isInStock}
+                        >
+                          +
+                        </button>
                       </div>
-                      <strong>{formatClp(transaction.amountSigned)}</strong>
-                      <span className="meta-text">{formatDateTime(transaction.createdAt)}</span>
-                    </div>
-                    <div className="stack" style={{ gap: '0.35rem', maxWidth: 300 }}>
-                      {transaction.referenceType ? (
+                      {quantity > 0 ? (
                         <span className="meta-text">
-                          Ref: {transaction.referenceType} / {transaction.referenceId ?? '—'}
+                          Subtotal {formatClp(quantity * item.priceAmount)}
                         </span>
                       ) : null}
-                      {transaction.note ? <span>{transaction.note}</span> : null}
                     </div>
-                  </div>
-                ))}
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className="surface-soft stack compact-card">
+              <div className="toolbar transaction-meta">
+                <div className="stack" style={{ gap: '0.2rem' }}>
+                  <span className="row-label">Total</span>
+                  <strong style={{ fontSize: '2rem' }}>{formatClp(orderTotal)}</strong>
+                </div>
+                <div className="stack" style={{ gap: '0.2rem', alignItems: 'flex-end' }}>
+                  <span className="row-label">Productos</span>
+                  <strong>{selectedItems.reduce((sum, entry) => sum + entry.quantity, 0)}</strong>
+                </div>
               </div>
-            )}
-          </SectionCard>
-        </div>
-      </div>
+              <button
+                className="button button--primary button--block"
+                type="submit"
+                disabled={
+                  selectedItems.length === 0 || placingOrder || !availability?.isOrderAheadEnabled
+                }
+              >
+                {placingOrder ? 'Enviando pedido…' : 'Pedir ahora'}
+              </button>
+              {!availability?.isOrderAheadEnabled ? (
+                <span className="field-help">
+                  La tienda debe estar disponible para confirmar tu pedido.
+                </span>
+              ) : null}
+            </div>
+          </form>
+        )}
+      </SectionCard>
+
+      <SectionCard className={!featuredOrder ? 'section-card--compact' : undefined}>
+        <CardHeader>
+          <div className="stack">
+            <span className="summary-card__eyebrow">2. Estado actual</span>
+            <h2>Estado actual</h2>
+            <p>
+              {featuredOrder
+                ? 'Revisa si ya fue recibido, está en preparación o listo para retiro.'
+                : 'Cuando hagas un pedido, verás su estado aquí.'}
+            </p>
+          </div>
+          <StatusChip
+            label={featuredOrder ? getStatusLabel(featuredOrder.status) : 'Sin pedido'}
+            tone={getStatusTone(featuredOrder?.status ?? 'neutral')}
+          />
+        </CardHeader>
+        {ordersError ? (
+          <InlineFeedback tone={featuredOrder ? 'error' : 'info'} message={ordersError} />
+        ) : null}
+        {ordersLoading && orders.length === 0 ? (
+          <LoadingBlock label="Buscando tu pedido actual…" />
+        ) : !featuredOrder ? (
+          <EmptyState
+            title="Sin pedido activo"
+            description="Cuando confirmes uno, verás aquí si fue recibido, está en preparación o listo para retiro."
+          />
+        ) : (
+          <div className="stack">
+            <article className="order-card compact-card">
+              <div className="order-card__header">
+                <div className="stack" style={{ gap: '0.4rem' }}>
+                  <div className="chip-row">
+                    <StatusChip
+                      label={getStatusLabel(featuredOrder.status)}
+                      tone={getStatusTone(featuredOrder.status)}
+                    />
+                  </div>
+                  <strong>{getTrackingHeadline(featuredOrder)}</strong>
+                  <span className="meta-text">{getTrackingSupport(featuredOrder)}</span>
+                </div>
+                <div className="stack" style={{ gap: '0.3rem', maxWidth: 320 }}>
+                  <span className="row-label">Total</span>
+                  <strong>{formatClp(featuredOrder.totalAmount)}</strong>
+                  <span className="meta-text">Pedido {featuredOrder.id}</span>
+                </div>
+              </div>
+
+              <div className="order-card__metrics">
+                <div className="meta-block">
+                  <span className="row-label">Recibido</span>
+                  <strong>{formatDateTime(featuredOrder.placedAt)}</strong>
+                </div>
+                <div className="meta-block">
+                  <span className="row-label">En preparación</span>
+                  <strong>
+                    {featuredOrder.acceptedAt ? formatDateTime(featuredOrder.acceptedAt) : 'Aún no'}
+                  </strong>
+                </div>
+                <div className="meta-block">
+                  <span className="row-label">Listo para retiro</span>
+                  <strong>
+                    {featuredOrder.readyAt ? formatDateTime(featuredOrder.readyAt) : 'Aún no'}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="surface-soft stack compact-card">
+                <div className="order-items">
+                  {featuredOrder.items.map((item) => (
+                    <div key={item.id} className="order-item-row">
+                      <span>
+                        {item.itemNameSnapshot} x{item.quantity}
+                      </span>
+                      <strong>{formatClp(item.lineTotalAmount)}</strong>
+                    </div>
+                  ))}
+                </div>
+                {featuredOrder.rejectionReason ? (
+                  <InlineFeedback tone="warning" message={featuredOrder.rejectionReason} />
+                ) : null}
+                {featuredOrder.cancellationReason ? (
+                  <InlineFeedback tone="warning" message={featuredOrder.cancellationReason} />
+                ) : null}
+              </div>
+
+              {featuredOrder.status === 'pending_acceptance' ? (
+                <button
+                  className="button button--soft-danger"
+                  type="button"
+                  onClick={() => onCancelOrder(featuredOrder.id)}
+                  disabled={cancellingOrderId === featuredOrder.id}
+                >
+                  {cancellingOrderId === featuredOrder.id ? 'Cancelando…' : 'Cancelar pedido'}
+                </button>
+              ) : null}
+            </article>
+
+            {recentOrders.length > 0 ? (
+              <div className="stack" style={{ gap: '0.75rem' }}>
+                <span className="row-label">Pedidos recientes</span>
+                <div className="list-grid compact-list">
+                  {recentOrders.map((order) => (
+                    <article key={order.id} className="menu-item-card compact-card">
+                      <div className="menu-item-card__header">
+                        <div className="stack" style={{ gap: '0.3rem' }}>
+                          <strong>{getStatusLabel(order.status)}</strong>
+                          <span className="meta-text">{formatDateTime(order.placedAt)}</span>
+                        </div>
+                        <strong>{formatClp(order.totalAmount)}</strong>
+                      </div>
+                      <span className="meta-text">{getTrackingSupport(order)}</span>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </SectionCard>
     </AppShell>
   );
 }
