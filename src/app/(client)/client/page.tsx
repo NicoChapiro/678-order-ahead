@@ -151,7 +151,10 @@ function getCustomerOrderErrorMessage(error: unknown, fallback: string) {
     return 'Uno o más productos ya no están disponibles. Revisa tu pedido e intenta de nuevo.';
   }
 
-  if (loweredError.includes('insufficient funds')) {
+  if (
+    loweredError.includes('insufficient funds') ||
+    loweredError.includes('insufficient wallet balance')
+  ) {
     return 'No pudimos confirmar el pago de tu pedido. Revisa tu saldo e intenta de nuevo.';
   }
 

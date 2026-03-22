@@ -13,6 +13,7 @@ import {
   OrderNotFoundError,
   OrderValidationError,
 } from '@/server/modules/orders/service';
+import { seedDemoWalletForNewCustomerSession } from '@/server/modules/wallet/service';
 
 const createOrderSchema = z.object({
   storeCode: z.enum(['store_1', 'store_2', 'store_3']),
@@ -35,6 +36,13 @@ export async function POST(request: NextRequest) {
   const customerIdentity = resolveCustomerIdentifier(request);
 
   try {
+    if (customerIdentity.isNew) {
+      await seedDemoWalletForNewCustomerSession(
+        orderRepository,
+        customerIdentity.customerIdentifier,
+      );
+    }
+
     const order = await createOrder(orderRepository, {
       ...body.data,
       customerIdentifier: customerIdentity.customerIdentifier,

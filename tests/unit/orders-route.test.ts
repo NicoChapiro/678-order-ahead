@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const createOrder = vi.fn();
 const resolveCustomerIdentifier = vi.fn();
 const setCustomerIdentifierCookie = vi.fn();
+const seedDemoWalletForNewCustomerSession = vi.fn();
 class MockMenuItemUnavailableError extends Error {}
 class MockOrderAheadUnavailableError extends Error {}
 class MockOrderInsufficientFundsError extends Error {}
@@ -17,6 +18,10 @@ vi.mock('@/server/modules/orders/repository', () => ({
 vi.mock('@/server/modules/customer-identity/session', () => ({
   resolveCustomerIdentifier,
   setCustomerIdentifierCookie,
+}));
+
+vi.mock('@/server/modules/wallet/service', () => ({
+  seedDemoWalletForNewCustomerSession,
 }));
 
 vi.mock('@/server/modules/orders/service', () => ({
@@ -35,6 +40,7 @@ describe('orders route', () => {
       customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
       isNew: true,
     });
+    seedDemoWalletForNewCustomerSession.mockResolvedValue(null);
   });
 
   it('creates an order successfully with an automatically resolved customer identity', async () => {
@@ -56,6 +62,10 @@ describe('orders route', () => {
     const payload = await response.json();
 
     expect(response.status).toBe(201);
+    expect(seedDemoWalletForNewCustomerSession).toHaveBeenCalledWith(
+      expect.anything(),
+      'customer_11111111-1111-4111-8111-111111111111',
+    );
     expect(createOrder).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -110,6 +120,31 @@ describe('orders route', () => {
     createOrder.mockRejectedValueOnce(new MockOrderNotFoundError("Store 'store_1' was not found."));
     response = await POST(request());
     expect(response.status).toBe(404);
+  });
+
+  it('does not reseed existing customer sessions', async () => {
+    const { POST } = await import('@/app/api/orders/route');
+    resolveCustomerIdentifier.mockReturnValue({
+      customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
+      isNew: false,
+    });
+    createOrder.mockResolvedValue({ id: 'order-2' });
+
+    const response = await POST(
+      new NextRequest('http://localhost/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          storeCode: 'store_1',
+          items: [{ menuItemId: '11111111-1111-1111-1111-111111111111', quantity: 1 }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(seedDemoWalletForNewCustomerSession).not.toHaveBeenCalled();
   });
 
   it('returns a calm 500 message for unexpected failures and logs them', async () => {

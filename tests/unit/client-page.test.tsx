@@ -398,4 +398,90 @@ describe('client page order actions', () => {
       expect(screen.getByRole('button', { name: 'Pedir ahora' })).toBeDisabled();
     });
   });
+
+  it('maps the wallet balance backend error to calm Spanish copy', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.includes('/api/orders')) {
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({
+            error: 'Insufficient wallet balance for this debit.',
+          }),
+        });
+      }
+
+      if (url.includes('/api/stores/store_1/order-ahead')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            availability: {
+              storeCode: 'store_1',
+              storeName: 'Store 1',
+              isOrderAheadEnabled: true,
+              disabledReasonCode: null,
+              disabledComment: null,
+              updatedAt: '2026-03-22T07:00:00.000Z',
+            },
+          }),
+        });
+      }
+
+      if (url.includes('/api/stores/store_1/menu')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            menu: {
+              storeCode: 'store_1',
+              storeName: 'Store 1',
+              items: [
+                {
+                  storeMenuItemId: 'store-menu-item-1',
+                  menuItemId: '11111111-1111-1111-1111-111111111111',
+                  code: 'latte',
+                  name: 'Latte',
+                  description: 'Café con leche',
+                  priceAmount: 3500,
+                  currencyCode: 'CLP',
+                  isVisible: true,
+                  isInStock: true,
+                  sortOrder: 1,
+                  baseIsActive: true,
+                  createdAt: '2026-03-22T07:00:00.000Z',
+                  updatedAt: '2026-03-22T07:00:00.000Z',
+                },
+              ],
+            },
+          }),
+        });
+      }
+
+      if (url.includes('/api/customers/me/orders')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ orders: [] }),
+        });
+      }
+
+      return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+    });
+
+    render(<ClientHomePage />);
+
+    const addButton = await screen.findByRole('button', { name: '+' });
+    fireEvent.click(addButton);
+
+    const submitButton = screen.getByRole('button', { name: 'Pedir ahora' });
+    fireEvent.click(submitButton);
+
+    expect(
+      await screen.findByText(
+        'No pudimos confirmar el pago de tu pedido. Revisa tu saldo e intenta de nuevo.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Insufficient wallet balance for this debit.'),
+    ).not.toBeInTheDocument();
+  });
 });
