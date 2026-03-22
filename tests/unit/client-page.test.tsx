@@ -55,7 +55,7 @@ describe('client page order actions', () => {
         });
       }
 
-      if (url.includes('/api/customers/demo-wallet-customer/orders')) {
+      if (url.includes('/api/customers/me/orders')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({ orders: [] }),
@@ -136,7 +136,7 @@ describe('client page order actions', () => {
         });
       }
 
-      if (url.includes('/api/customers/demo-wallet-customer/orders')) {
+      if (url.includes('/api/customers/me/orders')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({ orders: [] }),
@@ -216,14 +216,14 @@ describe('client page order actions', () => {
         });
       }
 
-      if (url.includes('/api/customers/demo-wallet-customer/orders')) {
+      if (url.includes('/api/customers/me/orders')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
             orders: [
               {
                 id: 'order-1',
-                customerIdentifier: 'demo-wallet-customer',
+                customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
                 storeCode: 'store_1',
                 storeName: 'Store 1',
                 status: 'pending_acceptance',
@@ -328,14 +328,14 @@ describe('client page order actions', () => {
         });
       }
 
-      if (url.includes('/api/customers/demo-wallet-customer/orders')) {
+      if (url.includes('/api/customers/me/orders')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
             orders: [
               {
                 id: 'order-1',
-                customerIdentifier: 'demo-wallet-customer',
+                customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
                 storeCode: 'store_1',
                 storeName: 'Store 1',
                 status: 'pending_acceptance',
@@ -374,6 +374,19 @@ describe('client page order actions', () => {
     fireEvent.click(addButton);
 
     fireEvent.click(screen.getByRole('button', { name: 'Pedir ahora' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/orders',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            storeCode: 'store_1',
+            items: [{ menuItemId: '11111111-1111-1111-1111-111111111111', quantity: 1 }],
+          }),
+        }),
+      );
+    });
 
     expect(
       await screen.findByText('Pedido enviado. Aquí mismo verás cuándo esté listo para retiro.'),
