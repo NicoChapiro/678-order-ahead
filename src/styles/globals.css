@@ -605,6 +605,38 @@ ul {
   gap: 0.85rem;
 }
 
+.section-card--order-focus {
+  gap: 1.5rem;
+}
+
+.section-card--compact {
+  gap: 0.9rem;
+  padding-top: 1.15rem;
+  padding-bottom: 1.15rem;
+}
+
+.menu-item-card--priority {
+  border-color: rgba(204, 221, 255, 0.95);
+  box-shadow: 0 10px 24px rgba(45, 108, 223, 0.08);
+}
+
+.quantity-control__button {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+.quantity-control__button--secondary {
+  background: #eef3fa;
+  color: var(--text);
+}
+
+.quantity-control__button--primary {
+  background: linear-gradient(180deg, var(--primary), var(--primary-strong));
+  color: white;
+  box-shadow: 0 10px 20px rgba(45, 108, 223, 0.2);
+}
+
 .compact-list {
   gap: 0.75rem;
 }
