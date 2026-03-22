@@ -2,9 +2,8 @@ import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createOrder = vi.fn();
-const resolveCustomerIdentifier = vi.fn();
-const setCustomerIdentifierCookie = vi.fn();
-const seedDemoWalletForNewCustomerSession = vi.fn();
+const requireAuthenticatedCustomerSession = vi.fn();
+class MockCustomerAuthError extends Error {}
 class MockMenuItemUnavailableError extends Error {}
 class MockOrderAheadUnavailableError extends Error {}
 class MockOrderInsufficientFundsError extends Error {}
@@ -15,13 +14,13 @@ vi.mock('@/server/modules/orders/repository', () => ({
   orderRepository: {},
 }));
 
-vi.mock('@/server/modules/customer-identity/session', () => ({
-  resolveCustomerIdentifier,
-  setCustomerIdentifierCookie,
+vi.mock('@/server/modules/customer-auth/repository', () => ({
+  customerAuthRepository: {},
 }));
 
-vi.mock('@/server/modules/wallet/service', () => ({
-  seedDemoWalletForNewCustomerSession,
+vi.mock('@/server/modules/customer-auth/service', () => ({
+  CustomerAuthError: MockCustomerAuthError,
+  requireAuthenticatedCustomerSession,
 }));
 
 vi.mock('@/server/modules/orders/service', () => ({
@@ -36,14 +35,15 @@ vi.mock('@/server/modules/orders/service', () => ({
 describe('orders route', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resolveCustomerIdentifier.mockReturnValue({
-      customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
-      isNew: true,
+    requireAuthenticatedCustomerSession.mockResolvedValue({
+      customer: {
+        id: 'customer-11111111-1111-4111-8111-111111111111',
+        phoneNumber: '+56912345678',
+      },
     });
-    seedDemoWalletForNewCustomerSession.mockResolvedValue(null);
   });
 
-  it('creates an order successfully with an automatically resolved customer identity', async () => {
+  it('creates an order successfully for the authenticated customer', async () => {
     const { POST } = await import('@/app/api/orders/route');
     createOrder.mockResolvedValue({ id: 'order-1' });
 
@@ -62,22 +62,39 @@ describe('orders route', () => {
     const payload = await response.json();
 
     expect(response.status).toBe(201);
-    expect(seedDemoWalletForNewCustomerSession).toHaveBeenCalledWith(
-      expect.anything(),
-      'customer_11111111-1111-4111-8111-111111111111',
-    );
     expect(createOrder).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
+        customerIdentifier: 'customer-11111111-1111-4111-8111-111111111111',
         storeCode: 'store_1',
       }),
     );
-    expect(setCustomerIdentifierCookie).toHaveBeenCalledWith(
-      expect.objectContaining({ cookies: expect.anything() }),
-      'customer_11111111-1111-4111-8111-111111111111',
-    );
     expect(payload).toEqual({ order: { id: 'order-1' } });
+  });
+
+  it('requires an authenticated customer session before placing an order', async () => {
+    const { POST } = await import('@/app/api/orders/route');
+    requireAuthenticatedCustomerSession.mockRejectedValue(
+      new MockCustomerAuthError('Inicia sesión con tu teléfono para continuar.'),
+    );
+
+    const response = await POST(
+      new NextRequest('http://localhost/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          storeCode: 'store_1',
+          items: [{ menuItemId: '11111111-1111-1111-1111-111111111111', quantity: 1 }],
+        }),
+      }),
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(payload).toEqual({ error: 'Inicia sesión con tu teléfono para continuar.' });
+    expect(createOrder).not.toHaveBeenCalled();
   });
 
   it('preserves known business error statuses', async () => {
@@ -122,31 +139,6 @@ describe('orders route', () => {
     expect(response.status).toBe(404);
   });
 
-  it('does not reseed existing customer sessions', async () => {
-    const { POST } = await import('@/app/api/orders/route');
-    resolveCustomerIdentifier.mockReturnValue({
-      customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
-      isNew: false,
-    });
-    createOrder.mockResolvedValue({ id: 'order-2' });
-
-    const response = await POST(
-      new NextRequest('http://localhost/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          storeCode: 'store_1',
-          items: [{ menuItemId: '11111111-1111-1111-1111-111111111111', quantity: 1 }],
-        }),
-      }),
-    );
-
-    expect(response.status).toBe(201);
-    expect(seedDemoWalletForNewCustomerSession).not.toHaveBeenCalled();
-  });
-
   it('returns a calm 500 message for unexpected failures and logs them', async () => {
     const { POST } = await import('@/app/api/orders/route');
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -172,7 +164,7 @@ describe('orders route', () => {
       'Unexpected error in create order route.',
       expect.objectContaining({
         storeCode: 'store_1',
-        customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
+        customerIdentifier: 'customer-11111111-1111-4111-8111-111111111111',
         itemCount: 1,
       }),
       expect.any(Error),

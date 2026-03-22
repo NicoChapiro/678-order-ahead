@@ -8,9 +8,13 @@ const databaseEnvSchema = z.object({
   DATABASE_URL: z.string().url(),
 });
 
-const customerPhoneAuthEnvSchema = z.object({
-  PHONE_AUTH_PROVIDER: z.string().min(1),
-  PHONE_AUTH_API_KEY: z.string().min(1),
+const customerAuthEnvSchema = z.object({
+  CUSTOMER_AUTH_SESSION_SECRET: z.string().min(1).optional(),
+  CUSTOMER_AUTH_OTP_SECRET: z.string().min(1).optional(),
+  CUSTOMER_AUTH_SMS_PROVIDER: z.enum(['console', 'twilio']).default('console'),
+  TWILIO_ACCOUNT_SID: z.string().min(1).optional(),
+  TWILIO_AUTH_TOKEN: z.string().min(1).optional(),
+  TWILIO_FROM_PHONE_NUMBER: z.string().min(1).optional(),
 });
 
 const bootstrapEnvSchema = nodeEnvSchema.extend({
@@ -24,12 +28,12 @@ const clientEnvSchema = z.object({
 });
 
 type DatabaseEnv = z.infer<typeof databaseEnvSchema>;
-type CustomerPhoneAuthEnv = z.infer<typeof customerPhoneAuthEnvSchema>;
+type CustomerAuthEnv = z.infer<typeof customerAuthEnvSchema>;
 type BootstrapEnv = z.infer<typeof bootstrapEnvSchema>;
 type ClientEnv = z.infer<typeof clientEnvSchema>;
 
 let cachedDatabaseEnv: DatabaseEnv | null = null;
-let cachedCustomerPhoneAuthEnv: CustomerPhoneAuthEnv | null = null;
+let cachedCustomerAuthEnv: CustomerAuthEnv | null = null;
 let cachedBootstrapEnv: BootstrapEnv | null = null;
 let cachedClientEnv: ClientEnv | null = null;
 
@@ -45,17 +49,21 @@ export function getDatabaseEnv(): DatabaseEnv {
   return cachedDatabaseEnv;
 }
 
-export function getCustomerPhoneAuthEnv(): CustomerPhoneAuthEnv {
-  if (cachedCustomerPhoneAuthEnv) {
-    return cachedCustomerPhoneAuthEnv;
+export function getCustomerAuthEnv(): CustomerAuthEnv {
+  if (cachedCustomerAuthEnv) {
+    return cachedCustomerAuthEnv;
   }
 
-  cachedCustomerPhoneAuthEnv = customerPhoneAuthEnvSchema.parse({
-    PHONE_AUTH_PROVIDER: process.env.PHONE_AUTH_PROVIDER,
-    PHONE_AUTH_API_KEY: process.env.PHONE_AUTH_API_KEY,
+  cachedCustomerAuthEnv = customerAuthEnvSchema.parse({
+    CUSTOMER_AUTH_SESSION_SECRET: process.env.CUSTOMER_AUTH_SESSION_SECRET,
+    CUSTOMER_AUTH_OTP_SECRET: process.env.CUSTOMER_AUTH_OTP_SECRET,
+    CUSTOMER_AUTH_SMS_PROVIDER: process.env.CUSTOMER_AUTH_SMS_PROVIDER,
+    TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
+    TWILIO_FROM_PHONE_NUMBER: process.env.TWILIO_FROM_PHONE_NUMBER,
   });
 
-  return cachedCustomerPhoneAuthEnv;
+  return cachedCustomerAuthEnv;
 }
 
 export function getBootstrapEnv(): BootstrapEnv {

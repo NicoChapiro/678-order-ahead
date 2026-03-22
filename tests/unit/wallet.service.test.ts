@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   assertSufficientWalletBalance,
   createAdminAdjustment,
@@ -7,7 +7,6 @@ import {
   createReferenceReversal,
   getWalletSummary,
   listWalletTransactions,
-  seedDemoWalletForNewCustomerSession,
   WalletInsufficientFundsError,
   WalletPermissionError,
   WalletValidationError,
@@ -145,16 +144,6 @@ class InMemoryWalletRepository implements WalletRepository {
 }
 
 describe('wallet service', () => {
-  const originalEnv = { ...process.env };
-
-  beforeEach(() => {
-    process.env = { ...originalEnv };
-    delete process.env.DEMO_CUSTOMER_WALLET_SEED_CLP;
-  });
-
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
 
   it('computes balance from posted ledger entries only', async () => {
     const repository = new InMemoryWalletRepository();
@@ -365,48 +354,6 @@ describe('wallet service', () => {
     ).rejects.toBeInstanceOf(WalletValidationError);
   });
 
-  it('seeds demo balance for a brand-new anonymous customer session when enabled', async () => {
-    const repository = new InMemoryWalletRepository();
-    process.env.DEMO_CUSTOMER_WALLET_SEED_CLP = '12000';
 
-    const ledgerEntry = await seedDemoWalletForNewCustomerSession(repository, 'customer-new');
-    const summary = await getWalletSummary(repository, 'customer-new');
 
-    expect(ledgerEntry?.entryType).toBe('admin_adjustment_credit');
-    expect(ledgerEntry?.amountSigned).toBe(12000);
-    expect(summary.currentBalance).toBe(12000);
-  });
-
-  it('does not reseed the same customer wallet repeatedly', async () => {
-    const repository = new InMemoryWalletRepository();
-    process.env.DEMO_CUSTOMER_WALLET_SEED_CLP = '12000';
-
-    await seedDemoWalletForNewCustomerSession(repository, 'customer-repeat');
-    await seedDemoWalletForNewCustomerSession(repository, 'customer-repeat');
-    const summary = await getWalletSummary(repository, 'customer-repeat');
-
-    expect(summary.currentBalance).toBe(12000);
-    expect(
-      repository.ledgerEntries.filter(
-        (entry) =>
-          entry.referenceType === 'admin_adjustment' &&
-          entry.referenceId === 'demo-customer-session-seed',
-      ),
-    ).toHaveLength(1);
-  });
-
-  it('allows a first seeded session to pay for a basic order', async () => {
-    const repository = new InMemoryWalletRepository();
-    process.env.DEMO_CUSTOMER_WALLET_SEED_CLP = '12000';
-
-    await seedDemoWalletForNewCustomerSession(repository, 'customer-seeded-order');
-    await createOrderPaymentDebit(repository, {
-      customerIdentifier: 'customer-seeded-order',
-      amount: 3500,
-      orderReferenceId: 'order-seeded',
-    });
-
-    const summary = await getWalletSummary(repository, 'customer-seeded-order');
-    expect(summary.currentBalance).toBe(8500);
-  });
 });

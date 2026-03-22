@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { customerAuthRepository } from '@/server/modules/customer-auth/repository';
+import {
+  CustomerAuthValidationError,
+  resolveCustomerIdentifierReference,
+} from '@/server/modules/customer-auth/service';
 import { StaffAuthError, getRequiredStaffSession } from '@/server/modules/staff-auth/service';
 import { walletRepository } from '@/server/modules/wallet/repository';
 import {
@@ -58,8 +63,14 @@ export async function POST(
   }
 
   try {
+    const customerIdentifier = await resolveCustomerIdentifierReference(
+      customerAuthRepository,
+      params.data.customerKey,
+      { createIfPhoneNumber: true },
+    );
+
     const ledgerEntry = await createAdminAdjustment(walletRepository, {
-      customerIdentifier: params.data.customerKey,
+      customerIdentifier,
       direction: body.data.direction,
       amount: body.data.amount,
       note: body.data.note,
@@ -79,7 +90,7 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
 
-    if (error instanceof WalletValidationError) {
+    if (error instanceof CustomerAuthValidationError || error instanceof WalletValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 

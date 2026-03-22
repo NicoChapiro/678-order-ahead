@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AppShell,
   CardHeader,
@@ -80,6 +80,26 @@ type Order = {
   }>;
 };
 
+type WalletSummary = {
+  wallet: {
+    id: string;
+    customerIdentifier: string;
+    currencyCode: 'CLP';
+    createdAt: string;
+    updatedAt: string;
+  };
+  currentBalance: number;
+};
+
+type AuthState = {
+  authenticated: boolean;
+  customer: {
+    id: string;
+    phoneNumber: string;
+  } | null;
+  walletSummary: WalletSummary | null;
+};
+
 function formatClp(amount: number) {
   return new Intl.NumberFormat('es-CL', {
     style: 'currency',
@@ -93,6 +113,14 @@ function formatDateTime(value: string) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
+}
+
+function maskPhoneNumber(phoneNumber: string) {
+  if (phoneNumber.length <= 4) {
+    return phoneNumber;
+  }
+
+  return `${phoneNumber.slice(0, 4)} ••• ${phoneNumber.slice(-3)}`;
 }
 
 function getCalmErrorMessage(error: unknown, fallback: string) {
@@ -140,6 +168,10 @@ function getCustomerOrderErrorMessage(error: unknown, fallback: string) {
 
   const loweredError = normalizedError.toLowerCase();
 
+  if (loweredError.includes('inicia sesión con tu teléfono')) {
+    return 'Ingresa con tu teléfono para confirmar el pedido.';
+  }
+
   if (
     loweredError.includes('order-ahead is currently unavailable') ||
     (loweredError.includes('store') && loweredError.includes('was not found'))
@@ -160,7 +192,6 @@ function getCustomerOrderErrorMessage(error: unknown, fallback: string) {
 
   if (
     loweredError.includes('must include at least one item') ||
-    loweredError.includes('customer key') ||
     loweredError.includes('quantities must be positive integers') ||
     loweredError.includes('order total must be a positive integer')
   ) {
@@ -181,6 +212,10 @@ function getCustomerCancelErrorMessage(error: unknown, fallback: string) {
   }
 
   const loweredError = normalizedError.toLowerCase();
+
+  if (loweredError.includes('inicia sesión con tu teléfono')) {
+    return 'Vuelve a ingresar con tu teléfono para revisar este pedido.';
+  }
 
   if (loweredError.includes('cancellation window has expired')) {
     return 'Ya no alcanzas a cancelar este pedido desde aquí.';
@@ -329,6 +364,16 @@ export default function ClientHomePage() {
   const [menu, setMenu] = useState<CustomerMenu | null>(null);
   const [storeLoading, setStoreLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [authState, setAuthState] = useState<AuthState | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authFeedback, setAuthFeedback] = useState<string | null>(null);
+  const [otpRequestedPhone, setOtpRequestedPhone] = useState<string | null>(null);
+  const [phoneNumberInput, setPhoneNumberInput] = useState('');
+  const [otpCodeInput, setOtpCodeInput] = useState('');
+  const [requestingOtp, setRequestingOtp] = useState(false);
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState<string | null>(null);
@@ -337,6 +382,9 @@ export default function ClientHomePage() {
   const [placingOrder, setPlacingOrder] = useState(false);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+
+  const isAuthenticated = authState?.authenticated === true && !!authState.customer;
+  const currentBalance = authState?.walletSummary?.currentBalance ?? 0;
 
   useEffect(() => {
     let isMounted = true;
@@ -401,7 +449,45 @@ export default function ClientHomePage() {
     };
   }, [storeCode]);
 
-  async function loadOrders() {
+  const loadAuthState = useCallback(async () => {
+    setAuthLoading(true);
+
+    try {
+      const response = await fetch('/api/customer-auth/session', { cache: 'no-store' });
+      const payload = (await response.json()) as AuthState & { error?: string };
+
+      if (!response.ok) {
+        setAuthState({ authenticated: false, customer: null, walletSummary: null });
+        setAuthError(getCalmErrorMessage(payload.error, 'No pudimos revisar tu sesión.'));
+        return;
+      }
+
+      setAuthState({
+        authenticated: payload.authenticated,
+        customer: payload.customer,
+        walletSummary: payload.walletSummary,
+      });
+      setAuthError(null);
+      if (!payload.authenticated) {
+        setOrders([]);
+        setOrdersError(null);
+      }
+    } catch {
+      setAuthState({ authenticated: false, customer: null, walletSummary: null });
+      setAuthError('No pudimos revisar tu sesión.');
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const loadOrders = useCallback(async () => {
+    if (!isAuthenticated) {
+      setOrders([]);
+      setOrdersError(null);
+      setOrdersLoading(false);
+      return;
+    }
+
     setOrdersLoading(true);
 
     try {
@@ -426,9 +512,19 @@ export default function ClientHomePage() {
     } finally {
       setOrdersLoading(false);
     }
-  }
+  }, [isAuthenticated]);
 
   useEffect(() => {
+    void loadAuthState();
+  }, [loadAuthState]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setOrders([]);
+      setOrdersError(null);
+      return;
+    }
+
     void loadOrders();
 
     const intervalId = window.setInterval(() => {
@@ -438,7 +534,7 @@ export default function ClientHomePage() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, []);
+  }, [isAuthenticated, loadOrders]);
 
   const visibleMenuItems = useMemo(
     () =>
@@ -464,6 +560,7 @@ export default function ClientHomePage() {
     (sum, entry) => sum + entry.item.priceAmount * entry.quantity,
     0,
   );
+  const orderTotalExceedsBalance = orderTotal > currentBalance;
 
   const sortedOrders = useMemo(
     () => [...orders].sort((left, right) => +new Date(right.placedAt) - +new Date(left.placedAt)),
@@ -484,6 +581,118 @@ export default function ClientHomePage() {
     () => sortedOrders.filter((order) => order.id !== featuredOrder?.id).slice(0, 3),
     [featuredOrder?.id, sortedOrders],
   );
+
+  async function onRequestOtp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRequestingOtp(true);
+    setAuthError(null);
+    setAuthFeedback(null);
+
+    try {
+      const response = await fetch('/api/customer-auth/request-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ phoneNumber: phoneNumberInput }),
+      });
+      const payload = await readJsonPayload(response);
+
+      if (!response.ok) {
+        setAuthError(
+          getCalmErrorMessage(
+            getPayloadErrorMessage(payload),
+            'No pudimos enviar el código. Intenta de nuevo.',
+          ),
+        );
+        return;
+      }
+
+      const nextPhone =
+        payload && typeof payload === 'object' && 'phoneNumber' in payload
+          ? String(payload.phoneNumber)
+          : phoneNumberInput;
+
+      setOtpRequestedPhone(nextPhone);
+      setPhoneNumberInput(nextPhone);
+      setAuthFeedback('Te enviamos un código por SMS.');
+    } catch {
+      setAuthError('No pudimos enviar el código. Intenta de nuevo.');
+    } finally {
+      setRequestingOtp(false);
+    }
+  }
+
+  async function onVerifyOtp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setVerifyingOtp(true);
+    setAuthError(null);
+    setAuthFeedback(null);
+
+    try {
+      const response = await fetch('/api/customer-auth/verify-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          phoneNumber: otpRequestedPhone ?? phoneNumberInput,
+          code: otpCodeInput,
+        }),
+      });
+      const payload = await readJsonPayload(response);
+
+      if (!response.ok) {
+        setAuthError(
+          getCalmErrorMessage(
+            getPayloadErrorMessage(payload),
+            'No pudimos confirmar el código. Intenta de nuevo.',
+          ),
+        );
+        return;
+      }
+
+      setOtpCodeInput('');
+      setOtpRequestedPhone(null);
+      setAuthFeedback('Tu sesión ya está lista.');
+      await loadAuthState();
+      await loadOrders();
+    } catch {
+      setAuthError('No pudimos confirmar el código. Intenta de nuevo.');
+    } finally {
+      setVerifyingOtp(false);
+    }
+  }
+
+  async function onSignOut() {
+    setSigningOut(true);
+    setAuthError(null);
+    setAuthFeedback(null);
+
+    try {
+      const response = await fetch('/api/customer-auth/logout', { method: 'POST' });
+      if (!response.ok) {
+        const payload = await readJsonPayload(response);
+        setAuthError(
+          getCalmErrorMessage(
+            getPayloadErrorMessage(payload),
+            'No pudimos cerrar la sesión. Intenta de nuevo.',
+          ),
+        );
+        return;
+      }
+
+      setAuthState({ authenticated: false, customer: null, walletSummary: null });
+      setOrders([]);
+      setOtpCodeInput('');
+      setOtpRequestedPhone(null);
+      setAuthFeedback('Sesión cerrada.');
+    } catch {
+      setAuthError('No pudimos cerrar la sesión. Intenta de nuevo.');
+    } finally {
+      setSigningOut(false);
+    }
+  }
 
   async function onPlaceOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -527,7 +736,7 @@ export default function ClientHomePage() {
       }
 
       setOrderActionFeedback('Pedido enviado. Aquí mismo verás cuándo esté listo para retiro.');
-      await loadOrders();
+      await Promise.all([loadAuthState(), loadOrders()]);
     } catch {
       setOrderActionError('No pudimos confirmar tu pedido. Intenta de nuevo.');
     } finally {
@@ -568,7 +777,7 @@ export default function ClientHomePage() {
           ? 'Actualizamos el estado más reciente de tu pedido.'
           : 'Pedido cancelado correctamente.',
       );
-      await loadOrders();
+      await Promise.all([loadAuthState(), loadOrders()]);
     } catch {
       setOrderActionError('No pudimos cancelar tu pedido. Intenta de nuevo.');
     } finally {
@@ -624,13 +833,18 @@ export default function ClientHomePage() {
             }
           />
           <StatItem
-            label="Siguiente paso"
-            value={availability?.isOrderAheadEnabled ? 'Elige tu café' : 'Espera un momento'}
+            label="Saldo"
+            value={isAuthenticated ? formatClp(currentBalance) : 'Ingresa para verlo'}
             helper={
-              availability?.isOrderAheadEnabled
-                ? 'Agrega productos y confirma.'
-                : 'Te mostraremos aquí cuando vuelva.'
+              isAuthenticated
+                ? 'Tu saldo disponible para este pedido.'
+                : 'Lo verás aquí después de ingresar.'
             }
+          />
+          <StatItem
+            label="Sesión"
+            value={isAuthenticated ? maskPhoneNumber(authState?.customer?.phoneNumber ?? '') : 'Pendiente'}
+            helper={isAuthenticated ? 'Lista para pedir y seguir tu orden.' : 'Ingresa con tu teléfono.'}
           />
         </StatGrid>
         {!availability?.isOrderAheadEnabled && availability ? (
@@ -645,7 +859,109 @@ export default function ClientHomePage() {
       <SectionCard className="section-card--order-focus">
         <CardHeader>
           <div className="stack">
-            <span className="summary-card__eyebrow">1. Elige y pide</span>
+            <span className="summary-card__eyebrow">1. Ingresa con tu teléfono</span>
+            <h2>Tu acceso</h2>
+            <p>Usamos un código por SMS para que puedas pedir y seguir tu orden sin vueltas.</p>
+          </div>
+          <StatusChip
+            label={isAuthenticated ? 'Sesión lista' : authLoading ? 'Revisando' : 'Falta ingresar'}
+            tone={isAuthenticated ? 'success' : authLoading ? 'neutral' : 'warning'}
+          />
+        </CardHeader>
+        {authError ? <InlineFeedback tone="error" message={authError} /> : null}
+        {authFeedback ? <InlineFeedback tone="success" message={authFeedback} /> : null}
+        {authLoading ? (
+          <LoadingBlock label="Revisando tu sesión…" />
+        ) : isAuthenticated ? (
+          <div className="surface-soft stack compact-card">
+            <div className="toolbar transaction-meta">
+              <div className="stack" style={{ gap: '0.3rem' }}>
+                <strong>{maskPhoneNumber(authState?.customer?.phoneNumber ?? '')}</strong>
+                <span className="meta-text">Tu saldo disponible es {formatClp(currentBalance)}.</span>
+              </div>
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={() => void onSignOut()}
+                disabled={signingOut}
+              >
+                {signingOut ? 'Cerrando…' : 'Cerrar sesión'}
+              </button>
+            </div>
+            <span className="field-help">
+              Si necesitas recargar, el equipo puede hacerlo en caja cuando estés en tienda.
+            </span>
+          </div>
+        ) : otpRequestedPhone ? (
+          <form onSubmit={onVerifyOtp} className="stack">
+            <div className="field-grid two-up">
+              <div className="field">
+                <label className="field-label" htmlFor="auth-phone-confirmed">
+                  Teléfono
+                </label>
+                <input id="auth-phone-confirmed" value={otpRequestedPhone} disabled />
+              </div>
+              <div className="field">
+                <label className="field-label" htmlFor="auth-code">
+                  Código SMS
+                </label>
+                <input
+                  id="auth-code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="123456"
+                  value={otpCodeInput}
+                  onChange={(event) => setOtpCodeInput(event.target.value)}
+                />
+              </div>
+            </div>
+            <div className="toolbar transaction-meta">
+              <button className="button button--primary" type="submit" disabled={verifyingOtp}>
+                {verifyingOtp ? 'Confirmando…' : 'Confirmar código'}
+              </button>
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={() => {
+                  setOtpRequestedPhone(null);
+                  setOtpCodeInput('');
+                  setAuthFeedback(null);
+                }}
+              >
+                Cambiar teléfono
+              </button>
+            </div>
+            <span className="field-help">El código vence pronto. Si no llegó, pide uno nuevo.</span>
+          </form>
+        ) : (
+          <form onSubmit={onRequestOtp} className="stack">
+            <div className="field">
+              <label className="field-label" htmlFor="auth-phone">
+                Teléfono
+              </label>
+              <input
+                id="auth-phone"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="+56912345678"
+                value={phoneNumberInput}
+                onChange={(event) => setPhoneNumberInput(event.target.value)}
+              />
+              <span className="field-help">Usa tu número con código de país.</span>
+            </div>
+            <div className="toolbar transaction-meta">
+              <button className="button button--primary" type="submit" disabled={requestingOtp}>
+                {requestingOtp ? 'Enviando…' : 'Enviar código'}
+              </button>
+            </div>
+          </form>
+        )}
+      </SectionCard>
+
+      <SectionCard className="section-card--order-focus">
+        <CardHeader>
+          <div className="stack">
+            <span className="summary-card__eyebrow">2. Elige y pide</span>
             <h2>Elige tu pedido</h2>
             <p>Agrega lo que quieras y confirma en segundos.</p>
           </div>
@@ -660,7 +976,12 @@ export default function ClientHomePage() {
         {orderActionFeedback ? (
           <InlineFeedback tone="success" message={orderActionFeedback} />
         ) : null}
-        {storeLoading ? (
+        {!isAuthenticated ? (
+          <EmptyState
+            title="Primero ingresa con tu teléfono"
+            description="Después podrás confirmar el pedido y ver su estado aquí mismo."
+          />
+        ) : storeLoading ? (
           <LoadingBlock label="Cargando menú…" />
         ) : !menu ? (
           <EmptyState
@@ -746,15 +1067,25 @@ export default function ClientHomePage() {
                   <strong style={{ fontSize: '2rem' }}>{formatClp(orderTotal)}</strong>
                 </div>
                 <div className="stack" style={{ gap: '0.2rem', alignItems: 'flex-end' }}>
-                  <span className="row-label">Productos</span>
-                  <strong>{selectedItems.reduce((sum, entry) => sum + entry.quantity, 0)}</strong>
+                  <span className="row-label">Saldo disponible</span>
+                  <strong>{formatClp(currentBalance)}</strong>
                 </div>
               </div>
+              {orderTotal > 0 ? (
+                <span className="field-help">
+                  {orderTotalExceedsBalance
+                    ? 'Tu saldo no alcanza para este pedido. El equipo puede recargarlo en caja.'
+                    : 'Tu saldo alcanza para confirmar este pedido.'}
+                </span>
+              ) : null}
               <button
                 className="button button--primary button--block"
                 type="submit"
                 disabled={
-                  selectedItems.length === 0 || placingOrder || !availability?.isOrderAheadEnabled
+                  selectedItems.length === 0 ||
+                  placingOrder ||
+                  !availability?.isOrderAheadEnabled ||
+                  orderTotalExceedsBalance
                 }
               >
                 {placingOrder ? 'Enviando pedido…' : 'Pedir ahora'}
@@ -772,23 +1103,35 @@ export default function ClientHomePage() {
       <SectionCard className={!featuredOrder ? 'section-card--compact' : undefined}>
         <CardHeader>
           <div className="stack">
-            <span className="summary-card__eyebrow">2. Estado actual</span>
+            <span className="summary-card__eyebrow">3. Sigue tu pedido</span>
             <h2>Estado actual</h2>
             <p>
-              {featuredOrder
-                ? 'Revisa si ya fue recibido, está en preparación o listo para retiro.'
-                : 'Cuando hagas un pedido, verás su estado aquí.'}
+              {!isAuthenticated
+                ? 'Cuando ingreses, verás aquí tus pedidos y su estado.'
+                : featuredOrder
+                  ? 'Revisa si ya fue recibido, está en preparación o listo para retiro.'
+                  : 'Cuando hagas un pedido, verás su estado aquí.'}
             </p>
           </div>
           <StatusChip
-            label={featuredOrder ? getStatusLabel(featuredOrder.status) : 'Sin pedido'}
+            label={
+              !isAuthenticated
+                ? 'Ingresa para ver'
+                : featuredOrder
+                  ? getStatusLabel(featuredOrder.status)
+                  : 'Sin pedido'
+            }
             tone={getStatusTone(featuredOrder?.status ?? 'neutral')}
           />
         </CardHeader>
-        {ordersError ? (
+        {!isAuthenticated ? (
+          <EmptyState
+            title="Ingresa para seguir tu pedido"
+            description="Usa tu teléfono y el código SMS para ver tus pedidos activos y recientes."
+          />
+        ) : ordersError ? (
           <InlineFeedback tone={featuredOrder ? 'error' : 'info'} message={ordersError} />
-        ) : null}
-        {ordersLoading && orders.length === 0 ? (
+        ) : ordersLoading && orders.length === 0 ? (
           <LoadingBlock label="Buscando tu pedido actual…" />
         ) : !featuredOrder ? (
           <EmptyState
@@ -858,7 +1201,7 @@ export default function ClientHomePage() {
                 <button
                   className="button button--soft-danger"
                   type="button"
-                  onClick={() => onCancelOrder(featuredOrder.id)}
+                  onClick={() => void onCancelOrder(featuredOrder.id)}
                   disabled={cancellingOrderId === featuredOrder.id}
                 >
                   {cancellingOrderId === featuredOrder.id ? 'Cancelando…' : 'Cancelar pedido'}
