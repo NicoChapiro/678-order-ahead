@@ -135,6 +135,11 @@ describe('orders route', () => {
     expect(payload).toEqual({ error: 'No pudimos confirmar tu pedido. Intenta de nuevo.' });
     expect(consoleError).toHaveBeenCalledWith(
       'Unexpected error in create order route.',
+      expect.objectContaining({
+        storeCode: 'store_1',
+        customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
+        itemCount: 1,
+      }),
       expect.any(Error),
     );
 

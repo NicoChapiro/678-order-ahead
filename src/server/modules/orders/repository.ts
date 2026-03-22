@@ -137,7 +137,9 @@ function mapOrderEvent(row: typeof orderEvents.$inferSelect): OrderEventRecord {
   };
 }
 
-function mapOrderNotification(row: typeof orderNotifications.$inferSelect): OrderNotificationRecord {
+function mapOrderNotification(
+  row: typeof orderNotifications.$inferSelect,
+): OrderNotificationRecord {
   return {
     id: row.id,
     orderId: row.orderId,
@@ -269,14 +271,14 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
   async function loadOrderDetailList(whereClause: any): Promise<OrderDetail[]> {
     const orderRows = (await loadOrderRows(whereClause)) as OrderRow[];
     const orderIds = orderRows.map((order) => order.id);
-    const [items, events, notifications] = await Promise.all([
-      loadOrderItems(orderIds),
-      loadOrderEvents(orderIds),
-      loadOrderNotifications(orderIds),
-    ]);
+    const items = await loadOrderItems(orderIds);
+    const events = await loadOrderEvents(orderIds);
+    const notifications = await loadOrderNotifications(orderIds);
 
     return orderRows.map((orderRow) => {
-      const orderEventsForOrder = events.filter((event: OrderEventRecord) => event.orderId === orderRow.id);
+      const orderEventsForOrder = events.filter(
+        (event: OrderEventRecord) => event.orderId === orderRow.id,
+      );
       return {
         ...buildOrderRecord(orderRow, orderEventsForOrder[0] ?? null),
         items: items.filter((item: OrderItem) => item.orderId === orderRow.id),
@@ -371,7 +373,9 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
 
     async listAdminOrders(storeCode, status?: OrderStatus) {
       return loadOrderDetailList(
-        status ? and(eq(stores.code, storeCode), eq(orders.status, status)) : eq(stores.code, storeCode),
+        status
+          ? and(eq(stores.code, storeCode), eq(orders.status, status))
+          : eq(stores.code, storeCode),
       );
     },
 

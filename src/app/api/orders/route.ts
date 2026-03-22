@@ -60,7 +60,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 
-    console.error('Unexpected error in create order route.', error);
+    console.error(
+      'Unexpected error in create order route.',
+      {
+        storeCode: body.data.storeCode,
+        customerIdentifier: customerIdentity.customerIdentifier,
+        itemCount: body.data.items.length,
+      },
+      error,
+    );
     return NextResponse.json(
       { error: 'No pudimos confirmar tu pedido. Intenta de nuevo.' },
       { status: 500 },
