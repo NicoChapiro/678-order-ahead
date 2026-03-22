@@ -66,11 +66,13 @@ function validateQuantity(quantity: number) {
   }
 }
 
-function assertCurrentState(current: OrderStatus, allowedCurrentStates: OrderStatus[], next: OrderStatus) {
+function assertCurrentState(
+  current: OrderStatus,
+  allowedCurrentStates: OrderStatus[],
+  next: OrderStatus,
+) {
   if (!allowedCurrentStates.includes(current)) {
-    throw new InvalidOrderStateTransitionError(
-      `Cannot move order from '${current}' to '${next}'.`,
-    );
+    throw new InvalidOrderStateTransitionError(`Cannot move order from '${current}' to '${next}'.`);
   }
 }
 
@@ -267,7 +269,10 @@ export async function createOrder(
   const quantityByMenuItemId = new Map<string, number>();
   for (const item of input.items) {
     validateQuantity(item.quantity);
-    quantityByMenuItemId.set(item.menuItemId, (quantityByMenuItemId.get(item.menuItemId) ?? 0) + item.quantity);
+    quantityByMenuItemId.set(
+      item.menuItemId,
+      (quantityByMenuItemId.get(item.menuItemId) ?? 0) + item.quantity,
+    );
   }
 
   const store = await repository.getStoreOrderContext(input.storeCode);
@@ -283,7 +288,9 @@ export async function createOrder(
   const availableRows = await repository.listStoreOrderMenuItems(input.storeCode, menuItemIds);
 
   if (availableRows.length !== menuItemIds.length) {
-    throw new MenuItemUnavailableError('One or more selected menu items are unavailable at this store.');
+    throw new MenuItemUnavailableError(
+      'One or more selected menu items are unavailable at this store.',
+    );
   }
 
   const lineItems = availableRows.map((row) => {
@@ -357,7 +364,10 @@ export async function createOrder(
 }
 
 export async function listCustomerOrders(repository: OrderRepository, customerIdentifier: string) {
-  return repository.listCustomerOrders(normalizeCustomerIdentifier(customerIdentifier));
+  const orders = await repository.listCustomerOrders(
+    normalizeCustomerIdentifier(customerIdentifier),
+  );
+  return orders ?? [];
 }
 
 export async function listAdminOrders(
@@ -391,7 +401,13 @@ async function transitionOrder(
     const order = ensureOrder(await tx.getOrderById(input.orderId));
 
     if (order.status === input.targetStatus) {
-      return reloadActionResult(tx, order.id, false, order.lastEvent, order.notifications[0] ?? null);
+      return reloadActionResult(
+        tx,
+        order.id,
+        false,
+        order.lastEvent,
+        order.notifications[0] ?? null,
+      );
     }
 
     assertCurrentState(order.status, input.allowedCurrentStates, input.targetStatus);
@@ -445,7 +461,12 @@ export async function acceptOrder(
 
 export async function rejectOrder(
   repository: OrderRepository,
-  input: { orderId: string; reason?: string; actorUserId?: string; actorRole?: 'owner' | 'barista' },
+  input: {
+    orderId: string;
+    reason?: string;
+    actorUserId?: string;
+    actorRole?: 'owner' | 'barista';
+  },
 ) {
   const rejectionReason = requireReason(input.reason, 'Rejection reason is required.');
 
@@ -453,7 +474,13 @@ export async function rejectOrder(
     const order = ensureOrder(await tx.getOrderById(input.orderId));
 
     if (order.status === 'rejected') {
-      return reloadActionResult(tx, order.id, false, order.lastEvent, order.notifications[0] ?? null);
+      return reloadActionResult(
+        tx,
+        order.id,
+        false,
+        order.lastEvent,
+        order.notifications[0] ?? null,
+      );
     }
 
     assertCurrentState(order.status, ['pending_acceptance'], 'rejected');
@@ -509,7 +536,13 @@ export async function cancelOrderByCustomer(
     const order = ensureOrder(await tx.getOrderById(input.orderId));
 
     if (order.status === 'cancelled_by_customer') {
-      return reloadActionResult(tx, order.id, false, order.lastEvent, order.notifications[0] ?? null);
+      return reloadActionResult(
+        tx,
+        order.id,
+        false,
+        order.lastEvent,
+        order.notifications[0] ?? null,
+      );
     }
 
     assertCurrentState(order.status, ['pending_acceptance'], 'cancelled_by_customer');
@@ -585,7 +618,12 @@ export async function completeOrder(
 
 export async function markOrderNoShow(
   repository: OrderRepository,
-  input: { orderId: string; reason?: string; actorUserId?: string; actorRole?: 'owner' | 'barista' },
+  input: {
+    orderId: string;
+    reason?: string;
+    actorUserId?: string;
+    actorRole?: 'owner' | 'barista';
+  },
 ): Promise<OrderNoShowResult> {
   const noShowReason = requireReason(input.reason, 'No-show note is required.');
 
@@ -593,12 +631,11 @@ export async function markOrderNoShow(
     const order = ensureOrder(await tx.getOrderById(input.orderId));
 
     if (order.status === 'no_show') {
-      const customerFlags =
-        (await tx.getCustomerOrderFlags(order.customerIdentifier)) ?? {
-          customerIdentifier: order.customerIdentifier,
-          noShowCount: 0,
-          updatedAt: order.updatedAt,
-        };
+      const customerFlags = (await tx.getCustomerOrderFlags(order.customerIdentifier)) ?? {
+        customerIdentifier: order.customerIdentifier,
+        noShowCount: 0,
+        updatedAt: order.updatedAt,
+      };
 
       const baseResult = await reloadActionResult(
         tx,

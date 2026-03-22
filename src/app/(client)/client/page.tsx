@@ -318,26 +318,32 @@ export default function ClientHomePage() {
 
   async function loadOrders() {
     setOrdersLoading(true);
-    const response = await fetch(
-      `/api/customers/${encodeURIComponent(INTERNAL_CUSTOMER_IDENTIFIER)}/orders`,
-      {
-        cache: 'no-store',
-      },
-    );
-    const payload = await response.json();
 
-    if (!response.ok) {
-      setOrders([]);
-      setOrdersError(
-        getCalmErrorMessage(payload.error, 'No pudimos revisar el estado de tu pedido.'),
+    try {
+      const response = await fetch(
+        `/api/customers/${encodeURIComponent(INTERNAL_CUSTOMER_IDENTIFIER)}/orders`,
+        {
+          cache: 'no-store',
+        },
       );
-      setOrdersLoading(false);
-      return;
-    }
+      const payload = (await response.json()) as { orders?: Order[]; error?: string };
 
-    setOrders((payload.orders as Order[]) ?? []);
-    setOrdersError(null);
-    setOrdersLoading(false);
+      if (!response.ok) {
+        setOrders([]);
+        setOrdersError(
+          getCalmErrorMessage(payload.error, 'No pudimos revisar el estado de tu pedido.'),
+        );
+        return;
+      }
+
+      setOrders(Array.isArray(payload.orders) ? payload.orders : []);
+      setOrdersError(null);
+    } catch {
+      setOrders([]);
+      setOrdersError('No pudimos revisar el estado de tu pedido.');
+    } finally {
+      setOrdersLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -681,7 +687,9 @@ export default function ClientHomePage() {
             tone={getStatusTone(featuredOrder?.status ?? 'neutral')}
           />
         </CardHeader>
-        {ordersError ? <InlineFeedback tone="error" message={ordersError} /> : null}
+        {ordersError ? (
+          <InlineFeedback tone={featuredOrder ? 'error' : 'info'} message={ordersError} />
+        ) : null}
         {ordersLoading && orders.length === 0 ? (
           <LoadingBlock label="Buscando tu pedido actual…" />
         ) : !featuredOrder ? (
