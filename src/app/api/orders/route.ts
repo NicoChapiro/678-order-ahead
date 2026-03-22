@@ -13,12 +13,14 @@ import {
 const createOrderSchema = z.object({
   customerIdentifier: z.string().trim().min(1).max(120),
   storeCode: z.enum(['store_1', 'store_2', 'store_3']),
-  items: z.array(
-    z.object({
-      menuItemId: z.string().uuid(),
-      quantity: z.number().int().positive(),
-    }),
-  ).min(1),
+  items: z
+    .array(
+      z.object({
+        menuItemId: z.string().uuid(),
+        quantity: z.number().int().positive(),
+      }),
+    )
+    .min(1),
 });
 
 export async function POST(request: NextRequest) {
@@ -44,6 +46,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 
-    return NextResponse.json({ error: 'Unexpected error.' }, { status: 500 });
+    console.error('Unexpected error in create order route.', error);
+    return NextResponse.json(
+      { error: 'No pudimos confirmar tu pedido. Intenta de nuevo.' },
+      { status: 500 },
+    );
   }
 }

@@ -120,6 +120,89 @@ function getCalmErrorMessage(error: unknown, fallback: string) {
   return normalizedError;
 }
 
+function getPayloadErrorMessage(payload: unknown) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const { error } = payload as { error?: unknown };
+  return typeof error === 'string' ? error : null;
+}
+
+function getCustomerOrderErrorMessage(error: unknown, fallback: string) {
+  if (typeof error !== 'string') {
+    return fallback;
+  }
+
+  const normalizedError = error.trim();
+  if (!normalizedError) {
+    return fallback;
+  }
+
+  const loweredError = normalizedError.toLowerCase();
+
+  if (
+    loweredError.includes('order-ahead is currently unavailable') ||
+    (loweredError.includes('store') && loweredError.includes('was not found'))
+  ) {
+    return 'La tienda no puede recibir pedidos ahora. Intenta de nuevo en unos minutos.';
+  }
+
+  if (loweredError.includes('menu item') && loweredError.includes('unavailable')) {
+    return 'Uno o más productos ya no están disponibles. Revisa tu pedido e intenta de nuevo.';
+  }
+
+  if (loweredError.includes('insufficient funds')) {
+    return 'No pudimos confirmar el pago de tu pedido. Revisa tu saldo e intenta de nuevo.';
+  }
+
+  if (
+    loweredError.includes('must include at least one item') ||
+    loweredError.includes('customer key') ||
+    loweredError.includes('quantities must be positive integers') ||
+    loweredError.includes('order total must be a positive integer')
+  ) {
+    return 'Revisa tu pedido e intenta de nuevo.';
+  }
+
+  return getCalmErrorMessage(normalizedError, fallback);
+}
+
+function getCustomerCancelErrorMessage(error: unknown, fallback: string) {
+  if (typeof error !== 'string') {
+    return fallback;
+  }
+
+  const normalizedError = error.trim();
+  if (!normalizedError) {
+    return fallback;
+  }
+
+  const loweredError = normalizedError.toLowerCase();
+
+  if (loweredError.includes('cancellation window has expired')) {
+    return 'Ya no alcanzas a cancelar este pedido desde aquí.';
+  }
+
+  if (loweredError.includes('cannot move order from')) {
+    return 'Este pedido ya cambió de estado. Actualiza la vista para seguirlo.';
+  }
+
+  if (loweredError.includes('order was not found')) {
+    return 'No encontramos ese pedido. Actualiza la vista e intenta de nuevo.';
+  }
+
+  return getCalmErrorMessage(normalizedError, fallback);
+}
+
+async function readJsonPayload(response: Response) {
+  try {
+    return (await response.json()) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 function getAvailabilityMessage(availability: Availability | null) {
   if (!availability) {
     return 'Estamos revisando si la tienda está lista para recibir tu pedido.';
@@ -409,42 +492,49 @@ export default function ClientHomePage() {
     setOrderActionFeedback(null);
     setPlacingOrder(true);
 
-    const response = await fetch('/api/orders', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        customerIdentifier: INTERNAL_CUSTOMER_IDENTIFIER,
-        storeCode,
-        items: selectedItems.map(({ item, quantity }) => ({
-          menuItemId: item.menuItemId,
-          quantity,
-        })),
-      }),
-    });
-    const payload = await response.json();
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          customerIdentifier: INTERNAL_CUSTOMER_IDENTIFIER,
+          storeCode,
+          items: selectedItems.map(({ item, quantity }) => ({
+            menuItemId: item.menuItemId,
+            quantity,
+          })),
+        }),
+      });
+      const payload = await readJsonPayload(response);
 
-    if (!response.ok) {
-      setOrderActionError(
-        getCalmErrorMessage(payload.error, 'No pudimos confirmar tu pedido. Intenta de nuevo.'),
-      );
+      if (!response.ok) {
+        setOrderActionError(
+          getCustomerOrderErrorMessage(
+            getPayloadErrorMessage(payload),
+            'No pudimos confirmar tu pedido. Intenta de nuevo.',
+          ),
+        );
+        return;
+      }
+
+      if (menu) {
+        setQuantities(
+          Object.fromEntries(menu.items.map((item) => [item.menuItemId, 0])) as Record<
+            string,
+            number
+          >,
+        );
+      }
+
+      setOrderActionFeedback('Pedido enviado. Aquí mismo verás cuándo esté listo para retiro.');
+      await loadOrders();
+    } catch {
+      setOrderActionError('No pudimos confirmar tu pedido. Intenta de nuevo.');
+    } finally {
       setPlacingOrder(false);
-      return;
     }
-
-    if (menu) {
-      setQuantities(
-        Object.fromEntries(menu.items.map((item) => [item.menuItemId, 0])) as Record<
-          string,
-          number
-        >,
-      );
-    }
-
-    setOrderActionFeedback('Pedido enviado. Aquí mismo verás cuándo esté listo para retiro.');
-    await loadOrders();
-    setPlacingOrder(false);
   }
 
   async function onCancelOrder(orderId: string) {
@@ -452,30 +542,40 @@ export default function ClientHomePage() {
     setOrderActionError(null);
     setOrderActionFeedback(null);
 
-    const response = await fetch(`/api/orders/${orderId}/cancel`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ reason: 'Cancelado desde la vista cliente.' }),
-    });
-    const payload = await response.json();
+    try {
+      const response = await fetch(`/api/orders/${orderId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ reason: 'Cancelado desde la vista cliente.' }),
+      });
+      const payload = await readJsonPayload(response);
 
-    setCancellingOrderId(null);
+      if (!response.ok) {
+        setOrderActionError(
+          getCustomerCancelErrorMessage(
+            getPayloadErrorMessage(payload),
+            'No pudimos cancelar tu pedido. Intenta de nuevo.',
+          ),
+        );
+        return;
+      }
 
-    if (!response.ok) {
-      setOrderActionError(
-        getCalmErrorMessage(payload.error, 'No pudimos cancelar tu pedido. Intenta de nuevo.'),
+      setOrderActionFeedback(
+        payload &&
+          typeof payload === 'object' &&
+          'transitionApplied' in payload &&
+          payload.transitionApplied === false
+          ? 'Actualizamos el estado más reciente de tu pedido.'
+          : 'Pedido cancelado correctamente.',
       );
-      return;
+      await loadOrders();
+    } catch {
+      setOrderActionError('No pudimos cancelar tu pedido. Intenta de nuevo.');
+    } finally {
+      setCancellingOrderId(null);
     }
-
-    setOrderActionFeedback(
-      payload.transitionApplied === false
-        ? 'Actualizamos el estado más reciente de tu pedido.'
-        : 'Pedido cancelado correctamente.',
-    );
-    await loadOrders();
   }
 
   return (
