@@ -26,6 +26,7 @@ export class OrderInsufficientFundsError extends Error {}
 export class InvalidOrderStateTransitionError extends Error {}
 export class CancellationWindowExpiredError extends Error {}
 export class OrderValidationError extends Error {}
+export class OrderNotificationRetryError extends Error {}
 
 const FIXED_ORDER_CURRENCY = 'CLP' as const;
 const CUSTOMER_CANCELLATION_WINDOW_MS = 5 * 60 * 1000;
@@ -85,12 +86,47 @@ function buildNotificationPayload(order: OrderDetail, extras?: Record<string, un
   return {
     orderId: order.id,
     orderStatus: order.status,
+    storeId: order.storeId,
     storeCode: order.storeCode,
     storeName: order.storeName,
     totalAmount: order.totalAmount,
     customerIdentifier: order.customerIdentifier,
     ...extras,
   };
+}
+
+async function processInternalNotification(
+  repository: OrderRepository,
+  notification: OrderNotificationRecord,
+): Promise<OrderNotificationRecord> {
+  const processedAt = new Date().toISOString();
+  const attemptCount = notification.attemptCount + 1;
+  const payload = notification.payloadJson ?? {};
+
+  const requiredFields = ['orderId', 'storeCode', 'customerIdentifier'] as const;
+  const missingFields = requiredFields.filter(
+    (field) => typeof payload[field] !== 'string' || payload[field].trim().length === 0,
+  );
+
+  if (missingFields.length > 0) {
+    return (await repository.updateOrderNotification({
+      notificationId: notification.id,
+      status: 'failed',
+      failureReason: `Missing required notification payload fields: ${missingFields.join(', ')}.`,
+      attemptCount,
+      processedAt,
+      updatedAt: processedAt,
+    })) as OrderNotificationRecord;
+  }
+
+  return (await repository.updateOrderNotification({
+    notificationId: notification.id,
+    status: 'sent',
+    failureReason: null,
+    attemptCount,
+    processedAt,
+    updatedAt: processedAt,
+  })) as OrderNotificationRecord;
 }
 
 async function createOrderEventAndNotification(
@@ -119,7 +155,7 @@ async function createOrderEventAndNotification(
     return { event, notification: null };
   }
 
-  const notification = await repository.createOrderNotification({
+  const createdNotification = await repository.createOrderNotification({
     orderId: input.order.id,
     notificationType: input.notificationType,
     channel: 'internal',
@@ -127,9 +163,12 @@ async function createOrderEventAndNotification(
     recipientCustomerIdentifier: input.order.customerIdentifier,
     payloadJson: input.notificationPayload ?? buildNotificationPayload(input.order),
     createdAt: input.actedAt,
+    updatedAt: input.actedAt,
   });
 
-  return { event, notification };
+  const processedNotification = await processInternalNotification(repository, createdNotification);
+
+  return { event, notification: processedNotification };
 }
 
 async function reverseOrderPayment(
@@ -172,6 +211,22 @@ async function reloadActionResult(
     event,
     notification,
   };
+}
+
+function ensureRetryableNotification(order: OrderDetail, notificationId: string) {
+  const notification = order.notifications.find((entry) => entry.id === notificationId) ?? null;
+
+  if (!notification) {
+    throw new OrderNotFoundError('Notification was not found for this order.');
+  }
+
+  if (notification.status !== 'failed') {
+    throw new OrderNotificationRetryError(
+      `Notification '${notification.id}' cannot be retried from status '${notification.status}'.`,
+    );
+  }
+
+  return notification;
 }
 
 export async function createOrder(
@@ -573,5 +628,18 @@ export async function markOrderNoShow(
       ...(await reloadActionResult(tx, order.id, true, event, notification)),
       customerFlags,
     };
+  });
+}
+
+export async function retryOrderNotification(
+  repository: OrderRepository,
+  input: { orderId: string; notificationId: string },
+): Promise<OrderActionResult> {
+  return repository.runInTransaction(async (tx) => {
+    const order = ensureOrder(await tx.getOrderById(input.orderId));
+    const notification = ensureRetryableNotification(order, input.notificationId);
+    const retriedNotification = await processInternalNotification(tx, notification);
+
+    return reloadActionResult(tx, order.id, false, order.lastEvent, retriedNotification);
   });
 }

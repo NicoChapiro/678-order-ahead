@@ -7,6 +7,7 @@ const rejectOrder = vi.fn();
 const markOrderReadyForPickup = vi.fn();
 const completeOrder = vi.fn();
 const markOrderNoShow = vi.fn();
+const retryOrderNotification = vi.fn();
 const getOrderDetail = vi.fn();
 const listAdminOrders = vi.fn();
 
@@ -22,12 +23,14 @@ vi.mock('@/server/modules/orders/repository', () => ({
 vi.mock('@/server/modules/orders/service', () => ({
   InvalidOrderStateTransitionError: class InvalidOrderStateTransitionError extends Error {},
   OrderNotFoundError: class OrderNotFoundError extends Error {},
+  OrderNotificationRetryError: class OrderNotificationRetryError extends Error {},
   OrderValidationError: class OrderValidationError extends Error {},
   acceptOrder,
   rejectOrder,
   markOrderReadyForPickup,
   completeOrder,
   markOrderNoShow,
+  retryOrderNotification,
   getOrderDetail,
   listAdminOrders,
 }));
@@ -47,14 +50,17 @@ describe('admin order routes', () => {
       order: { id: 'order-1', status: 'accepted' },
       transitionApplied: true,
       event: { eventType: 'order_accepted' },
-      notification: { notificationType: 'order_accepted' },
+      notification: { notificationType: 'order_accepted', status: 'sent', attemptCount: 1 },
     });
 
-    const response = await POST(new NextRequest('http://localhost/api/admin/orders/order-1/accept', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    }), { params: Promise.resolve({ orderId: 'order-1' }) });
+    const response = await POST(
+      new NextRequest('http://localhost/api/admin/orders/order-1/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+      { params: Promise.resolve({ orderId: 'order-1' }) },
+    );
     const payload = await response.json();
 
     expect(response.status).toBe(200);
@@ -68,11 +74,14 @@ describe('admin order routes', () => {
   it('reject route validates reason', async () => {
     const { POST } = await import('@/app/api/admin/orders/[orderId]/reject/route');
 
-    const response = await POST(new NextRequest('http://localhost/api/admin/orders/order-1/reject', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason: '' }),
-    }), { params: Promise.resolve({ orderId: 'order-1' }) });
+    const response = await POST(
+      new NextRequest('http://localhost/api/admin/orders/order-1/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: '' }),
+      }),
+      { params: Promise.resolve({ orderId: 'order-1' }) },
+    );
 
     expect(response.status).toBe(400);
     expect(rejectOrder).not.toHaveBeenCalled();
@@ -81,14 +90,51 @@ describe('admin order routes', () => {
   it('no-show route validates reason', async () => {
     const { POST } = await import('@/app/api/admin/orders/[orderId]/no-show/route');
 
-    const response = await POST(new NextRequest('http://localhost/api/admin/orders/order-1/no-show', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    }), { params: Promise.resolve({ orderId: 'order-1' }) });
+    const response = await POST(
+      new NextRequest('http://localhost/api/admin/orders/order-1/no-show', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+      { params: Promise.resolve({ orderId: 'order-1' }) },
+    );
 
     expect(response.status).toBe(400);
     expect(markOrderNoShow).not.toHaveBeenCalled();
+  });
+
+  it('retry route forwards order and notification ids', async () => {
+    const { POST } = await import(
+      '@/app/api/admin/orders/[orderId]/notifications/[notificationId]/retry/route'
+    );
+    retryOrderNotification.mockResolvedValue({
+      order: { id: 'order-1', status: 'accepted' },
+      transitionApplied: false,
+      event: { eventType: 'order_accepted' },
+      notification: {
+        id: 'notification-1',
+        notificationType: 'order_accepted',
+        status: 'sent',
+        attemptCount: 2,
+      },
+    });
+
+    const response = await POST(
+      new NextRequest('http://localhost/api/admin/orders/order-1/notifications/notification-1/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+      { params: Promise.resolve({ orderId: 'order-1', notificationId: 'notification-1' }) },
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(retryOrderNotification).toHaveBeenCalledWith(expect.anything(), {
+      orderId: 'order-1',
+      notificationId: 'notification-1',
+    });
+    expect(payload.notification.attemptCount).toBe(2);
   });
 
   it('store orders route forwards status filter and returns route metadata', async () => {
@@ -123,7 +169,14 @@ describe('admin order routes', () => {
       readyAt: '2026-01-01T00:05:00.000Z',
       lastEvent: { eventType: 'order_ready', createdAt: '2026-01-01T00:05:00.000Z' },
       events: [{ eventType: 'order_ready', createdAt: '2026-01-01T00:05:00.000Z' }],
-      notifications: [{ notificationType: 'order_ready', status: 'pending' }],
+      notifications: [
+        {
+          notificationType: 'order_ready',
+          status: 'sent',
+          attemptCount: 1,
+          updatedAt: '2026-01-01T00:05:05.000Z',
+        },
+      ],
     });
 
     const response = await GET(
@@ -135,5 +188,6 @@ describe('admin order routes', () => {
     expect(response.status).toBe(200);
     expect(payload.order.lastEvent.eventType).toBe('order_ready');
     expect(payload.order.notifications[0].notificationType).toBe('order_ready');
+    expect(payload.order.notifications[0].attemptCount).toBe(1);
   });
 });

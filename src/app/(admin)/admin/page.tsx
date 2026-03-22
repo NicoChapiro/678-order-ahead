@@ -94,6 +94,19 @@ type WalletTransaction = {
   createdAt: string;
 };
 
+type OrderNotification = {
+  id: string;
+  notificationType: string;
+  channel: string;
+  status: string;
+  payloadJson: Record<string, unknown> | null;
+  failureReason: string | null;
+  attemptCount: number;
+  createdAt: string;
+  processedAt: string | null;
+  updatedAt: string;
+};
+
 type AdminOrder = {
   id: string;
   customerIdentifier: string;
@@ -122,9 +135,10 @@ type AdminOrder = {
     itemNameSnapshot: string;
     quantity: number;
   }>;
+  notifications: OrderNotification[];
 };
 
-type OrderActionName = 'accept' | 'ready' | 'complete' | 'reject' | 'no-show';
+type OrderActionName = 'accept' | 'ready' | 'complete' | 'reject' | 'no-show' | 'retry-notification';
 type OrderStatusFilter =
   | 'all'
   | 'pending_acceptance'
@@ -202,6 +216,76 @@ function getNextActionHint(status: AdminOrder['status']) {
     default:
       return 'Esta orden no requiere acción operativa inmediata.';
   }
+}
+
+function getNotificationTypeLabel(notificationType: string) {
+  switch (notificationType) {
+    case 'order_accepted':
+      return 'Aceptación';
+    case 'order_rejected':
+      return 'Rechazo';
+    case 'order_ready':
+      return 'Lista para retiro';
+    case 'order_completed':
+      return 'Completada';
+    case 'order_cancelled':
+      return 'Cancelación cliente';
+    case 'order_no_show':
+      return 'No-show';
+    default:
+      return notificationType;
+  }
+}
+
+function getNotificationStatusTone(status: string) {
+  switch (status) {
+    case 'sent':
+      return 'success';
+    case 'failed':
+      return 'danger';
+    case 'pending':
+      return 'warning';
+    case 'skipped':
+      return 'muted';
+    default:
+      return 'neutral';
+  }
+}
+
+function getNotificationStatusLabel(status: string) {
+  switch (status) {
+    case 'sent':
+      return 'Enviada';
+    case 'failed':
+      return 'Fallida';
+    case 'pending':
+      return 'Pendiente';
+    case 'skipped':
+      return 'Omitida';
+    default:
+      return status;
+  }
+}
+
+function buildOrderActionFeedback(payload: {
+  transitionApplied?: boolean;
+  event?: { eventType?: string | null } | null;
+  notification?: OrderNotification | null;
+}) {
+  const actionOutcome =
+    payload.transitionApplied === false
+      ? 'La acción ya existía; se refrescó el estado vigente.'
+      : 'Orden actualizada correctamente.';
+
+  const eventSummary = payload.event?.eventType
+    ? ` Evento registrado: ${payload.event.eventType}.`
+    : ' Sin evento adicional.';
+
+  const notificationSummary = payload.notification
+    ? ` Notificación ${getNotificationTypeLabel(payload.notification.notificationType).toLowerCase()} en estado ${getNotificationStatusLabel(payload.notification.status).toLowerCase()} (intentos: ${payload.notification.attemptCount}).`
+    : ' Sin notificación asociada.';
+
+  return `${actionOutcome}${eventSummary}${notificationSummary}`;
 }
 
 export default function AdminHomePage() {
@@ -633,11 +717,7 @@ export default function AdminHomePage() {
       return;
     }
 
-    setOrderFeedback(
-      payload.transitionApplied === false
-        ? 'La acción ya había sido aplicada previamente; se recargó el estado actual.'
-        : 'Orden actualizada correctamente.',
-    );
+    setOrderFeedback(buildOrderActionFeedback(payload));
 
     if (action === 'reject') {
       setRejectReasons((current) => ({ ...current, [orderId]: '' }));
@@ -672,6 +752,39 @@ export default function AdminHomePage() {
     }
 
     await submitOrderAction(orderId, 'no-show', { reason });
+  }
+
+  async function onRetryNotification(orderId: string, notificationId: string) {
+    setOrdersError(null);
+    setOrderFeedback(null);
+    setOrderActionPending((current) => ({ ...current, [notificationId]: 'retry-notification' }));
+
+    const response = await fetch(
+      `/api/admin/orders/${orderId}/notifications/${notificationId}/retry`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      },
+    );
+    const payload = await response.json();
+
+    setOrderActionPending((current) => ({ ...current, [notificationId]: null }));
+
+    if (response.status === 401) {
+      router.push('/admin/login');
+      return;
+    }
+
+    if (!response.ok) {
+      setOrdersError(payload.error ?? 'No se pudo reintentar la notificación.');
+      return;
+    }
+
+    setOrderFeedback(buildOrderActionFeedback(payload));
+    await loadOrders();
   }
 
   return (
@@ -937,6 +1050,7 @@ export default function AdminHomePage() {
               <div className="list-grid">
                 {orders.map((order) => {
                   const pendingAction = orderActionPending[order.id];
+                  const latestNotification = order.notifications[0] ?? null;
                   const noShowReason =
                     order.status === 'no_show'
                       ? typeof order.lastEvent?.metadataJson?.reason === 'string'
@@ -1022,6 +1136,63 @@ export default function AdminHomePage() {
                             message={`Nota no-show: ${noShowReason}`}
                           />
                         ) : null}
+                        {latestNotification ? (
+                          <div className="surface-soft stack" style={{ gap: '0.6rem' }}>
+                            <div className="toolbar">
+                              <div className="stack" style={{ gap: '0.25rem' }}>
+                                <span className="row-label">Última consecuencia de notificación</span>
+                                <div className="chip-row">
+                                  <StatusChip
+                                    label={getNotificationTypeLabel(latestNotification.notificationType)}
+                                    tone="muted"
+                                  />
+                                  <StatusChip
+                                    label={getNotificationStatusLabel(latestNotification.status)}
+                                    tone={getNotificationStatusTone(latestNotification.status)}
+                                  />
+                                  <StatusChip label={`Intentos ${latestNotification.attemptCount}`} tone="muted" />
+                                </div>
+                              </div>
+                              {latestNotification.status === 'failed' ? (
+                                <button
+                                  className="button button--secondary"
+                                  type="button"
+                                  onClick={() => onRetryNotification(order.id, latestNotification.id)}
+                                  disabled={orderActionPending[latestNotification.id] === 'retry-notification'}
+                                >
+                                  {orderActionPending[latestNotification.id] === 'retry-notification'
+                                    ? 'Reintentando…'
+                                    : 'Reintentar notificación'}
+                                </button>
+                              ) : null}
+                            </div>
+                            <div className="order-card__metrics">
+                              <div className="meta-block">
+                                <span className="row-label">Creada</span>
+                                <strong>{formatDateTime(latestNotification.createdAt)}</strong>
+                              </div>
+                              <div className="meta-block">
+                                <span className="row-label">Última actualización</span>
+                                <strong>{formatDateTime(latestNotification.updatedAt)}</strong>
+                              </div>
+                              <div className="meta-block">
+                                <span className="row-label">Canal</span>
+                                <strong>{latestNotification.channel}</strong>
+                              </div>
+                            </div>
+                            {latestNotification.failureReason ? (
+                              <InlineFeedback
+                                tone="error"
+                                message={`Último error: ${latestNotification.failureReason}`}
+                              />
+                            ) : null}
+                          </div>
+                        ) : (
+                          <InlineFeedback
+                            tone="info"
+                            message="Esta orden aún no generó una notificación operacional interna."
+                          />
+                        )}
                       </div>
 
                       <div className="stack">
