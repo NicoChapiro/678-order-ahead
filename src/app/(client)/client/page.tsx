@@ -16,7 +16,6 @@ import {
 
 type StoreCode = 'store_1';
 
-const INTERNAL_CUSTOMER_IDENTIFIER = 'demo-wallet-customer';
 const ORDER_REFRESH_INTERVAL_MS = 15000;
 
 type Availability = {
@@ -403,12 +402,9 @@ export default function ClientHomePage() {
     setOrdersLoading(true);
 
     try {
-      const response = await fetch(
-        `/api/customers/${encodeURIComponent(INTERNAL_CUSTOMER_IDENTIFIER)}/orders`,
-        {
-          cache: 'no-store',
-        },
-      );
+      const response = await fetch('/api/customers/me/orders', {
+        cache: 'no-store',
+      });
       const payload = (await response.json()) as { orders?: Order[]; error?: string };
 
       if (!response.ok) {
@@ -499,7 +495,6 @@ export default function ClientHomePage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          customerIdentifier: INTERNAL_CUSTOMER_IDENTIFIER,
           storeCode,
           items: selectedItems.map(({ item, quantity }) => ({
             menuItemId: item.menuItemId,

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import {
+  resolveCustomerIdentifier,
+  setCustomerIdentifierCookie,
+} from '@/server/modules/customer-identity/session';
 import { orderRepository } from '@/server/modules/orders/repository';
 import {
   createOrder,
@@ -11,7 +15,6 @@ import {
 } from '@/server/modules/orders/service';
 
 const createOrderSchema = z.object({
-  customerIdentifier: z.string().trim().min(1).max(120),
   storeCode: z.enum(['store_1', 'store_2', 'store_3']),
   items: z
     .array(
@@ -29,9 +32,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: body.error.flatten() }, { status: 400 });
   }
 
+  const customerIdentity = resolveCustomerIdentifier(request);
+
   try {
-    const order = await createOrder(orderRepository, body.data);
-    return NextResponse.json({ order }, { status: 201 });
+    const order = await createOrder(orderRepository, {
+      ...body.data,
+      customerIdentifier: customerIdentity.customerIdentifier,
+    });
+    const response = NextResponse.json({ order }, { status: 201 });
+
+    if (customerIdentity.isNew) {
+      setCustomerIdentifierCookie(response, customerIdentity.customerIdentifier);
+    }
+
+    return response;
   } catch (error) {
     if (error instanceof OrderValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });

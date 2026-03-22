@@ -527,13 +527,18 @@ export async function rejectOrder(
 
 export async function cancelOrderByCustomer(
   repository: OrderRepository,
-  input: { orderId: string; reason?: string },
+  input: { orderId: string; customerIdentifier: string; reason?: string },
 ) {
   const cancellationReason =
     normalizeOptionalReason(input.reason) ?? 'Cancelled by customer within allowed window.';
 
   return repository.runInTransaction(async (tx) => {
     const order = ensureOrder(await tx.getOrderById(input.orderId));
+    const customerIdentifier = normalizeCustomerIdentifier(input.customerIdentifier);
+
+    if (order.customerIdentifier !== customerIdentifier) {
+      throw new OrderNotFoundError('Order was not found.');
+    }
 
     if (order.status === 'cancelled_by_customer') {
       return reloadActionResult(

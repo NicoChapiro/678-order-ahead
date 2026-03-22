@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createOrder = vi.fn();
+const resolveCustomerIdentifier = vi.fn();
+const setCustomerIdentifierCookie = vi.fn();
 class MockMenuItemUnavailableError extends Error {}
 class MockOrderAheadUnavailableError extends Error {}
 class MockOrderInsufficientFundsError extends Error {}
@@ -10,6 +12,11 @@ class MockOrderValidationError extends Error {}
 
 vi.mock('@/server/modules/orders/repository', () => ({
   orderRepository: {},
+}));
+
+vi.mock('@/server/modules/customer-identity/session', () => ({
+  resolveCustomerIdentifier,
+  setCustomerIdentifierCookie,
 }));
 
 vi.mock('@/server/modules/orders/service', () => ({
@@ -24,9 +31,13 @@ vi.mock('@/server/modules/orders/service', () => ({
 describe('orders route', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolveCustomerIdentifier.mockReturnValue({
+      customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
+      isNew: true,
+    });
   });
 
-  it('creates an order successfully', async () => {
+  it('creates an order successfully with an automatically resolved customer identity', async () => {
     const { POST } = await import('@/app/api/orders/route');
     createOrder.mockResolvedValue({ id: 'order-1' });
 
@@ -37,7 +48,6 @@ describe('orders route', () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          customerIdentifier: 'demo-wallet-customer',
           storeCode: 'store_1',
           items: [{ menuItemId: '11111111-1111-1111-1111-111111111111', quantity: 1 }],
         }),
@@ -46,6 +56,17 @@ describe('orders route', () => {
     const payload = await response.json();
 
     expect(response.status).toBe(201);
+    expect(createOrder).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        customerIdentifier: 'customer_11111111-1111-4111-8111-111111111111',
+        storeCode: 'store_1',
+      }),
+    );
+    expect(setCustomerIdentifierCookie).toHaveBeenCalledWith(
+      expect.objectContaining({ cookies: expect.anything() }),
+      'customer_11111111-1111-4111-8111-111111111111',
+    );
     expect(payload).toEqual({ order: { id: 'order-1' } });
   });
 
@@ -59,7 +80,6 @@ describe('orders route', () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          customerIdentifier: 'demo-wallet-customer',
           storeCode: 'store_1',
           items: [{ menuItemId: '11111111-1111-1111-1111-111111111111', quantity: 1 }],
         }),
@@ -104,7 +124,6 @@ describe('orders route', () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          customerIdentifier: 'demo-wallet-customer',
           storeCode: 'store_1',
           items: [{ menuItemId: '11111111-1111-1111-1111-111111111111', quantity: 1 }],
         }),

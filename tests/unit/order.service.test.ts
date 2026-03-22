@@ -127,7 +127,10 @@ class InMemoryOrderRepository implements OrderRepository {
     return this.stores.find((store) => store.storeCode === storeCode) ?? null;
   }
 
-  async listStoreOrderMenuItems(storeCode: 'store_1' | 'store_2' | 'store_3', menuItemIds: string[]) {
+  async listStoreOrderMenuItems(
+    storeCode: 'store_1' | 'store_2' | 'store_3',
+    menuItemIds: string[],
+  ) {
     return this.storeMenuItems.filter(
       (item) => item.storeCode === storeCode && menuItemIds.includes(item.menuItemId),
     );
@@ -276,7 +279,8 @@ class InMemoryOrderRepository implements OrderRepository {
   }
 
   async updateOrderNotification(input: UpdateOrderNotificationInput) {
-    const notification = this.orderNotifications.find((entry) => entry.id === input.notificationId) ?? null;
+    const notification =
+      this.orderNotifications.find((entry) => entry.id === input.notificationId) ?? null;
     if (!notification) {
       return null;
     }
@@ -292,7 +296,9 @@ class InMemoryOrderRepository implements OrderRepository {
   }
 
   async getCustomerOrderFlags(customerIdentifier: string) {
-    return this.customerFlags.find((entry) => entry.customerIdentifier === customerIdentifier) ?? null;
+    return (
+      this.customerFlags.find((entry) => entry.customerIdentifier === customerIdentifier) ?? null
+    );
   }
 
   async incrementCustomerNoShowCount(customerIdentifier: string, actedAt: string) {
@@ -337,7 +343,11 @@ class InMemoryOrderRepository implements OrderRepository {
     return this.ledgerEntries.filter((entry) => entry.walletId === walletId);
   }
 
-  async listReferenceEntries(walletId: string, referenceType: WalletReferenceType, referenceId: string) {
+  async listReferenceEntries(
+    walletId: string,
+    referenceType: WalletReferenceType,
+    referenceId: string,
+  ) {
     return this.ledgerEntries.filter(
       (entry) =>
         entry.walletId === walletId &&
@@ -516,7 +526,9 @@ describe('order service', () => {
       items: [{ menuItemId: 'menu-1', quantity: 1 }],
     });
 
-    await expect(rejectOrder(repository, { orderId: order.id })).rejects.toBeInstanceOf(OrderValidationError);
+    await expect(rejectOrder(repository, { orderId: order.id })).rejects.toBeInstanceOf(
+      OrderValidationError,
+    );
 
     const result = await rejectOrder(repository, {
       orderId: order.id,
@@ -526,7 +538,9 @@ describe('order service', () => {
     });
 
     expect(result.order.status).toBe('rejected');
-    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(2);
+    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(
+      2,
+    );
     expect(repository.ledgerEntries.at(-1)?.entryType).toBe('order_reversal');
     expect(result.event?.eventType).toBe('order_rejected');
     expect(result.notification?.notificationType).toBe('order_rejected');
@@ -538,7 +552,11 @@ describe('order service', () => {
       storeCode: 'store_1',
       items: [{ menuItemId: 'menu-1', quantity: 1 }],
     });
-    await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    await acceptOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
 
     const result = await markOrderReadyForPickup(repository, {
       orderId: order.id,
@@ -557,7 +575,11 @@ describe('order service', () => {
       storeCode: 'store_1',
       items: [{ menuItemId: 'menu-1', quantity: 1 }],
     });
-    await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    await acceptOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
     await markOrderReadyForPickup(repository, {
       orderId: order.id,
       actorUserId: 'staff-1',
@@ -581,9 +603,15 @@ describe('order service', () => {
       storeCode: 'store_1',
       items: [{ menuItemId: 'menu-1', quantity: 1 }],
     });
-    await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    await acceptOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
 
-    await expect(markOrderNoShow(repository, { orderId: order.id })).rejects.toBeInstanceOf(OrderValidationError);
+    await expect(markOrderNoShow(repository, { orderId: order.id })).rejects.toBeInstanceOf(
+      OrderValidationError,
+    );
 
     const result = await markOrderNoShow(repository, {
       orderId: order.id,
@@ -615,7 +643,11 @@ describe('order service', () => {
       items: [{ menuItemId: 'menu-1', quantity: 1 }],
     });
 
-    const accepted = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    const accepted = await acceptOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
     expect(accepted.notification).toMatchObject({
       notificationType: 'order_accepted',
       status: 'sent',
@@ -651,7 +683,11 @@ describe('order service', () => {
       storeCode: 'store_1',
       items: [{ menuItemId: 'menu-1', quantity: 1 }],
     });
-    const accepted = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    const accepted = await acceptOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
 
     const failedNotification = await repository.updateOrderNotification({
       notificationId: accepted.notification!.id,
@@ -684,7 +720,11 @@ describe('order service', () => {
       storeCode: 'store_1',
       items: [{ menuItemId: 'menu-1', quantity: 1 }],
     });
-    const accepted = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    const accepted = await acceptOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
 
     await expect(
       retryOrderNotification(repository, {
@@ -749,7 +789,9 @@ describe('order service', () => {
     ]);
 
     const fulfilled = results.filter(
-      (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof retryOrderNotification>>> =>
+      (
+        result,
+      ): result is PromiseFulfilledResult<Awaited<ReturnType<typeof retryOrderNotification>>> =>
         result.status === 'fulfilled',
     );
     const rejected = results.filter(
@@ -766,7 +808,9 @@ describe('order service', () => {
     expect(rejected[0].reason).toBeInstanceOf(OrderNotificationRetryError);
 
     const reloadedOrder = await concurrentRepository.getOrderById(order.id);
-    expect(reloadedOrder?.notifications.find((entry) => entry.id === accepted.notification!.id)).toMatchObject({
+    expect(
+      reloadedOrder?.notifications.find((entry) => entry.id === accepted.notification!.id),
+    ).toMatchObject({
       status: 'sent',
       attemptCount: 2,
       failureReason: null,
@@ -806,7 +850,9 @@ describe('order service', () => {
     ).rejects.toBeInstanceOf(OrderNotificationRetryError);
 
     const reloadedOrder = await repository.getOrderById(order.id);
-    expect(reloadedOrder?.notifications.find((entry) => entry.id === smsNotification.id)).toMatchObject({
+    expect(
+      reloadedOrder?.notifications.find((entry) => entry.id === smsNotification.id),
+    ).toMatchObject({
       id: smsNotification.id,
       channel: 'sms',
       status: 'failed',
@@ -822,12 +868,24 @@ describe('order service', () => {
       items: [{ menuItemId: 'menu-1', quantity: 1 }],
     });
 
-    const first = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
-    const second = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    const first = await acceptOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
+    const second = await acceptOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
 
     expect(first.transitionApplied).toBe(true);
     expect(second.transitionApplied).toBe(false);
-    expect(repository.orderEvents.filter((event) => event.orderId === order.id && event.eventType === 'order_accepted')).toHaveLength(1);
+    expect(
+      repository.orderEvents.filter(
+        (event) => event.orderId === order.id && event.eventType === 'order_accepted',
+      ),
+    ).toHaveLength(1);
   });
 
   it('invalid transitions are rejected', async () => {
@@ -854,17 +912,42 @@ describe('order service', () => {
 
     vi.advanceTimersByTime(4 * 60 * 1000);
 
-    const result = await cancelOrderByCustomer(repository, { orderId: order.id });
+    const result = await cancelOrderByCustomer(repository, {
+      orderId: order.id,
+      customerIdentifier: 'demo-wallet-customer',
+    });
     expect(result.order.status).toBe('cancelled_by_customer');
     expect(result.notification?.notificationType).toBe('order_cancelled');
     expect(result.event?.eventType).toBe('order_cancelled');
-    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(2);
+    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(
+      2,
+    );
 
-    const duplicate = await cancelOrderByCustomer(repository, { orderId: order.id });
+    const duplicate = await cancelOrderByCustomer(repository, {
+      orderId: order.id,
+      customerIdentifier: 'demo-wallet-customer',
+    });
     expect(duplicate.transitionApplied).toBe(false);
-    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(2);
+    expect(repository.ledgerEntries.filter((entry) => entry.referenceId === order.id)).toHaveLength(
+      2,
+    );
 
     vi.useRealTimers();
+  });
+
+  it('prevents one customer session from cancelling another customer order', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+
+    await expect(
+      cancelOrderByCustomer(repository, {
+        orderId: order.id,
+        customerIdentifier: 'customer_22222222-2222-4222-8222-222222222222',
+      }),
+    ).rejects.toBeInstanceOf(OrderNotFoundError);
   });
 
   it('cancelling after five minutes fails', async () => {
@@ -879,9 +962,12 @@ describe('order service', () => {
 
     vi.advanceTimersByTime(6 * 60 * 1000);
 
-    await expect(cancelOrderByCustomer(repository, { orderId: order.id })).rejects.toBeInstanceOf(
-      CancellationWindowExpiredError,
-    );
+    await expect(
+      cancelOrderByCustomer(repository, {
+        orderId: order.id,
+        customerIdentifier: 'demo-wallet-customer',
+      }),
+    ).rejects.toBeInstanceOf(CancellationWindowExpiredError);
 
     vi.useRealTimers();
   });
