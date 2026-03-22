@@ -3,6 +3,14 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  buildOrderActionFeedback,
+  countRecentRejectedOrders,
+  getAdminNotificationStatusLabel,
+  getAdminNotificationTypeLabel,
+  getAdminOrderStatusLabel,
+  getPendingAcceptancePreventionMessages,
+} from '@/app/(admin)/admin/order-workflow';
+import {
   AppShell,
   CardHeader,
   EmptyState,
@@ -138,7 +146,13 @@ type AdminOrder = {
   notifications: OrderNotification[];
 };
 
-type OrderActionName = 'accept' | 'ready' | 'complete' | 'reject' | 'no-show' | 'retry-notification';
+type OrderActionName =
+  | 'accept'
+  | 'ready'
+  | 'complete'
+  | 'reject'
+  | 'no-show'
+  | 'retry-notification';
 type OrderStatusFilter =
   | 'all'
   | 'pending_acceptance'
@@ -162,27 +176,6 @@ function formatDateTime(value: string) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
-}
-
-function getStatusLabel(status: string) {
-  switch (status) {
-    case 'pending_acceptance':
-      return 'Pendiente';
-    case 'accepted':
-      return 'Aceptada';
-    case 'rejected':
-      return 'Rechazada';
-    case 'cancelled_by_customer':
-      return 'Cancelada';
-    case 'ready_for_pickup':
-      return 'Lista';
-    case 'completed':
-      return 'Completada';
-    case 'no_show':
-      return 'No-show';
-    default:
-      return status;
-  }
 }
 
 function getStatusTone(status: string) {
@@ -218,25 +211,6 @@ function getNextActionHint(status: AdminOrder['status']) {
   }
 }
 
-function getNotificationTypeLabel(notificationType: string) {
-  switch (notificationType) {
-    case 'order_accepted':
-      return 'Aceptación';
-    case 'order_rejected':
-      return 'Rechazo';
-    case 'order_ready':
-      return 'Lista para retiro';
-    case 'order_completed':
-      return 'Completada';
-    case 'order_cancelled':
-      return 'Cancelación cliente';
-    case 'order_no_show':
-      return 'No-show';
-    default:
-      return notificationType;
-  }
-}
-
 function getNotificationStatusTone(status: string) {
   switch (status) {
     case 'sent':
@@ -250,42 +224,6 @@ function getNotificationStatusTone(status: string) {
     default:
       return 'neutral';
   }
-}
-
-function getNotificationStatusLabel(status: string) {
-  switch (status) {
-    case 'sent':
-      return 'Enviada';
-    case 'failed':
-      return 'Fallida';
-    case 'pending':
-      return 'Pendiente';
-    case 'skipped':
-      return 'Omitida';
-    default:
-      return status;
-  }
-}
-
-function buildOrderActionFeedback(payload: {
-  transitionApplied?: boolean;
-  event?: { eventType?: string | null } | null;
-  notification?: OrderNotification | null;
-}) {
-  const actionOutcome =
-    payload.transitionApplied === false
-      ? 'La acción ya existía; se refrescó el estado vigente.'
-      : 'Orden actualizada correctamente.';
-
-  const eventSummary = payload.event?.eventType
-    ? ` Evento registrado: ${payload.event.eventType}.`
-    : ' Sin evento adicional.';
-
-  const notificationSummary = payload.notification
-    ? ` Notificación ${getNotificationTypeLabel(payload.notification.notificationType).toLowerCase()} en estado ${getNotificationStatusLabel(payload.notification.status).toLowerCase()} (intentos: ${payload.notification.attemptCount}).`
-    : ' Sin notificación asociada.';
-
-  return `${actionOutcome}${eventSummary}${notificationSummary}`;
 }
 
 export default function AdminHomePage() {
@@ -339,6 +277,10 @@ export default function AdminHomePage() {
       ).length,
     [orders],
   );
+
+  const recentRejectedOrders = useMemo(() => countRecentRejectedOrders(orders), [orders]);
+  const storeWideIssuePromptVisible =
+    overview?.availability.isOrderAheadEnabled === true && recentRejectedOrders >= 2;
 
   async function loadOverview() {
     setOverviewLoading(true);
@@ -717,7 +659,7 @@ export default function AdminHomePage() {
       return;
     }
 
-    setOrderFeedback(buildOrderActionFeedback(payload));
+    setOrderFeedback(buildOrderActionFeedback(action, payload));
 
     if (action === 'reject') {
       setRejectReasons((current) => ({ ...current, [orderId]: '' }));
@@ -783,8 +725,29 @@ export default function AdminHomePage() {
       return;
     }
 
-    setOrderFeedback(buildOrderActionFeedback(payload));
+    setOrderFeedback(buildOrderActionFeedback('reintentar notificación', payload));
     await loadOrders();
+  }
+
+  function jumpToSection(sectionId: string) {
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function prefillPause(reason: string, nextComment: string) {
+    setNewIsEnabled(false);
+    setReasonCode(reason);
+    setComment((current) => current || nextComment);
+    setOrderFeedback(
+      'Se preparó una pausa operativa para esta sucursal. Revisa el motivo en Order-ahead y guarda el estado antes de seguir rechazando.',
+    );
+    jumpToSection('admin-order-ahead');
+  }
+
+  function jumpToMenuStock() {
+    setOrderFeedback(
+      'Revisa el menú de la sucursal y marca los ítems afectados como sin stock para prevenir nuevos pedidos rechazables.',
+    );
+    jumpToSection('admin-menu');
   }
 
   return (
@@ -861,150 +824,154 @@ export default function AdminHomePage() {
 
       <div className="page-columns">
         <div className="stack">
-          <SectionCard>
-            <CardHeader>
-              <div className="stack">
-                <h2>Order-ahead</h2>
-                <p>
-                  Haz visible el estado actual, previene errores y deja evidencia del motivo cuando
-                  pausas la tienda.
-                </p>
-              </div>
-            </CardHeader>
-            {error ? <InlineFeedback tone="error" message={error} /> : null}
-            {overviewLoading ? (
-              <LoadingBlock label="Cargando disponibilidad y bitácora…" />
-            ) : overview ? (
-              <>
-                <div className="surface-soft stack">
-                  <div className="toolbar">
-                    <div className="stack" style={{ gap: '0.35rem' }}>
-                      <span className="kicker">Estado actual</span>
-                      <div className="chip-row">
-                        <StatusChip
-                          label={overview.availability.isOrderAheadEnabled ? 'Activo' : 'Inactivo'}
-                          tone={getStatusTone(
-                            overview.availability.isOrderAheadEnabled ? 'active' : 'inactive',
-                          )}
-                        />
-                        {!overview.availability.isOrderAheadEnabled &&
-                        overview.availability.disabledReasonCode ? (
+          <div id="admin-order-ahead">
+            <SectionCard>
+              <CardHeader>
+                <div className="stack">
+                  <h2>Order-ahead</h2>
+                  <p>
+                    Haz visible el estado actual, previene errores y deja evidencia del motivo
+                    cuando pausas la tienda.
+                  </p>
+                </div>
+              </CardHeader>
+              {error ? <InlineFeedback tone="error" message={error} /> : null}
+              {overviewLoading ? (
+                <LoadingBlock label="Cargando disponibilidad y bitácora…" />
+              ) : overview ? (
+                <>
+                  <div className="surface-soft stack">
+                    <div className="toolbar">
+                      <div className="stack" style={{ gap: '0.35rem' }}>
+                        <span className="kicker">Estado actual</span>
+                        <div className="chip-row">
                           <StatusChip
-                            label={overview.availability.disabledReasonCode}
-                            tone="muted"
+                            label={
+                              overview.availability.isOrderAheadEnabled ? 'Activo' : 'Inactivo'
+                            }
+                            tone={getStatusTone(
+                              overview.availability.isOrderAheadEnabled ? 'active' : 'inactive',
+                            )}
                           />
-                        ) : null}
+                          {!overview.availability.isOrderAheadEnabled &&
+                          overview.availability.disabledReasonCode ? (
+                            <StatusChip
+                              label={overview.availability.disabledReasonCode}
+                              tone="muted"
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="meta-block">
+                        <span className="row-label">Última actualización</span>
+                        <strong>{formatDateTime(overview.availability.updatedAt)}</strong>
                       </div>
                     </div>
-                    <div className="meta-block">
-                      <span className="row-label">Última actualización</span>
-                      <strong>{formatDateTime(overview.availability.updatedAt)}</strong>
-                    </div>
+                    {!overview.availability.isOrderAheadEnabled &&
+                    overview.availability.disabledComment ? (
+                      <p>{overview.availability.disabledComment}</p>
+                    ) : null}
                   </div>
-                  {!overview.availability.isOrderAheadEnabled &&
-                  overview.availability.disabledComment ? (
-                    <p>{overview.availability.disabledComment}</p>
-                  ) : null}
-                </div>
 
-                <form onSubmit={onSubmitOrderAhead} className="form-grid">
-                  <label className="toggle-row surface-soft" htmlFor="order-ahead-enabled">
-                    <input
-                      id="order-ahead-enabled"
-                      type="checkbox"
-                      checked={newIsEnabled}
-                      onChange={(event) => setNewIsEnabled(event.target.checked)}
-                    />
-                    <div className="stack" style={{ gap: '0.2rem' }}>
-                      <strong>Habilitar order-ahead</strong>
+                  <form onSubmit={onSubmitOrderAhead} className="form-grid">
+                    <label className="toggle-row surface-soft" htmlFor="order-ahead-enabled">
+                      <input
+                        id="order-ahead-enabled"
+                        type="checkbox"
+                        checked={newIsEnabled}
+                        onChange={(event) => setNewIsEnabled(event.target.checked)}
+                      />
+                      <div className="stack" style={{ gap: '0.2rem' }}>
+                        <strong>Habilitar order-ahead</strong>
+                        <span className="field-help">
+                          Si se desactiva, el motivo y comentario quedan visibles para dar contexto
+                          operativo.
+                        </span>
+                      </div>
+                    </label>
+
+                    {!newIsEnabled ? (
+                      <div className="form-grid form-grid--two">
+                        <label className="field">
+                          <span className="field-label">Motivo de pausa</span>
+                          <select
+                            value={reasonCode}
+                            onChange={(event) => setReasonCode(event.target.value)}
+                          >
+                            <option value="manual_pause">Manual pause</option>
+                            <option value="equipment_issue">Equipment issue</option>
+                            <option value="staffing_issue">Staffing issue</option>
+                            <option value="inventory_issue">Inventory issue</option>
+                            <option value="system_issue">System issue</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Comentario interno/visible</span>
+                          <textarea
+                            value={comment}
+                            onChange={(event) => setComment(event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+
+                    <div className="inline-actions">
+                      <button
+                        className="button button--primary"
+                        type="submit"
+                        disabled={overviewSaving}
+                      >
+                        {overviewSaving ? 'Guardando…' : 'Guardar estado operativo'}
+                      </button>
                       <span className="field-help">
-                        Si se desactiva, el motivo y comentario quedan visibles para dar contexto
-                        operativo.
+                        Evita cambios accidentales revisando motivo y comentario antes de pausar.
                       </span>
                     </div>
-                  </label>
+                  </form>
 
-                  {!newIsEnabled ? (
-                    <div className="form-grid form-grid--two">
-                      <label className="field">
-                        <span className="field-label">Motivo de pausa</span>
-                        <select
-                          value={reasonCode}
-                          onChange={(event) => setReasonCode(event.target.value)}
-                        >
-                          <option value="manual_pause">Manual pause</option>
-                          <option value="equipment_issue">Equipment issue</option>
-                          <option value="staffing_issue">Staffing issue</option>
-                          <option value="inventory_issue">Inventory issue</option>
-                          <option value="system_issue">System issue</option>
-                          <option value="other">Other</option>
-                        </select>
-                      </label>
-                      <label className="field">
-                        <span className="field-label">Comentario interno/visible</span>
-                        <textarea
-                          value={comment}
-                          onChange={(event) => setComment(event.target.value)}
-                        />
-                      </label>
-                    </div>
-                  ) : null}
-
-                  <div className="inline-actions">
-                    <button
-                      className="button button--primary"
-                      type="submit"
-                      disabled={overviewSaving}
-                    >
-                      {overviewSaving ? 'Guardando…' : 'Guardar estado operativo'}
-                    </button>
-                    <span className="field-help">
-                      Evita cambios accidentales revisando motivo y comentario antes de pausar.
-                    </span>
-                  </div>
-                </form>
-
-                <div className="stack">
-                  <h3>Historial reciente</h3>
-                  {overview.recentHistory.length === 0 ? (
-                    <EmptyState
-                      title="Sin cambios recientes"
-                      description="Cuando la disponibilidad cambie, el historial mostrará actor, estado y fecha para auditoría rápida."
-                    />
-                  ) : (
-                    <div className="list-grid">
-                      {overview.recentHistory.map((event) => (
-                        <div key={event.id} className="transaction-row">
-                          <div className="stack" style={{ gap: '0.35rem' }}>
-                            <div className="chip-row">
-                              <StatusChip
-                                label={event.newIsEnabled ? 'Activo' : 'Pausado'}
-                                tone={event.newIsEnabled ? 'success' : 'danger'}
-                              />
-                              {event.reasonCode ? (
-                                <StatusChip label={event.reasonCode} tone="muted" />
-                              ) : null}
+                  <div className="stack">
+                    <h3>Historial reciente</h3>
+                    {overview.recentHistory.length === 0 ? (
+                      <EmptyState
+                        title="Sin cambios recientes"
+                        description="Cuando la disponibilidad cambie, el historial mostrará actor, estado y fecha para auditoría rápida."
+                      />
+                    ) : (
+                      <div className="list-grid">
+                        {overview.recentHistory.map((event) => (
+                          <div key={event.id} className="transaction-row">
+                            <div className="stack" style={{ gap: '0.35rem' }}>
+                              <div className="chip-row">
+                                <StatusChip
+                                  label={event.newIsEnabled ? 'Activo' : 'Pausado'}
+                                  tone={event.newIsEnabled ? 'success' : 'danger'}
+                                />
+                                {event.reasonCode ? (
+                                  <StatusChip label={event.reasonCode} tone="muted" />
+                                ) : null}
+                              </div>
+                              <strong>{formatDateTime(event.changedAt)}</strong>
+                              <span className="meta-text">{event.changedByRole}</span>
                             </div>
-                            <strong>{formatDateTime(event.changedAt)}</strong>
-                            <span className="meta-text">{event.changedByRole}</span>
+                            <div className="stack" style={{ gap: '0.35rem', maxWidth: 360 }}>
+                              <span className="row-label">Comentario</span>
+                              <span>{event.comment || 'Sin comentario adicional.'}</span>
+                            </div>
                           </div>
-                          <div className="stack" style={{ gap: '0.35rem', maxWidth: 360 }}>
-                            <span className="row-label">Comentario</span>
-                            <span>{event.comment || 'Sin comentario adicional.'}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <EmptyState
-                title="Sin overview disponible"
-                description="No fue posible cargar el estado actual de la sucursal."
-              />
-            )}
-          </SectionCard>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <EmptyState
+                  title="Sin overview disponible"
+                  description="No fue posible cargar el estado actual de la sucursal."
+                />
+              )}
+            </SectionCard>
+          </div>
 
           <SectionCard>
             <CardHeader>
@@ -1039,6 +1006,12 @@ export default function AdminHomePage() {
             </CardHeader>
             {ordersError ? <InlineFeedback tone="error" message={ordersError} /> : null}
             {orderFeedback ? <InlineFeedback tone="success" message={orderFeedback} /> : null}
+            {storeWideIssuePromptVisible ? (
+              <InlineFeedback
+                tone="warning"
+                message={`Order-ahead sigue activo y ya hay ${recentRejectedOrders} rechazos recientes en esta vista. Si la causa es general, pausa la sucursal antes de seguir rechazando pedidos.`}
+              />
+            ) : null}
             {ordersLoading ? (
               <LoadingBlock label="Cargando órdenes de la sucursal…" />
             ) : orders.length === 0 ? (
@@ -1057,6 +1030,10 @@ export default function AdminHomePage() {
                         ? order.lastEvent.metadataJson.reason
                         : null
                       : null;
+                  const preventionMessages = getPendingAcceptancePreventionMessages({
+                    isOrderAheadEnabled: overview?.availability.isOrderAheadEnabled === true,
+                    repeatedRecentRejects: recentRejectedOrders,
+                  });
 
                   return (
                     <article key={order.id} className="order-card compact-card">
@@ -1064,7 +1041,7 @@ export default function AdminHomePage() {
                         <div className="stack" style={{ gap: '0.4rem' }}>
                           <div className="chip-row">
                             <StatusChip
-                              label={getStatusLabel(order.status)}
+                              label={getAdminOrderStatusLabel(order.status)}
                               tone={getStatusTone(order.status)}
                             />
                             <StatusChip label={order.storeName} tone="muted" />
@@ -1140,27 +1117,42 @@ export default function AdminHomePage() {
                           <div className="surface-soft stack" style={{ gap: '0.6rem' }}>
                             <div className="toolbar">
                               <div className="stack" style={{ gap: '0.25rem' }}>
-                                <span className="row-label">Última consecuencia de notificación</span>
+                                <span className="row-label">
+                                  Última consecuencia de notificación
+                                </span>
                                 <div className="chip-row">
                                   <StatusChip
-                                    label={getNotificationTypeLabel(latestNotification.notificationType)}
+                                    label={getAdminNotificationTypeLabel(
+                                      latestNotification.notificationType,
+                                    )}
                                     tone="muted"
                                   />
                                   <StatusChip
-                                    label={getNotificationStatusLabel(latestNotification.status)}
+                                    label={getAdminNotificationStatusLabel(
+                                      latestNotification.status,
+                                    )}
                                     tone={getNotificationStatusTone(latestNotification.status)}
                                   />
-                                  <StatusChip label={`Intentos ${latestNotification.attemptCount}`} tone="muted" />
+                                  <StatusChip
+                                    label={`Intentos ${latestNotification.attemptCount}`}
+                                    tone="muted"
+                                  />
                                 </div>
                               </div>
                               {latestNotification.status === 'failed' ? (
                                 <button
                                   className="button button--secondary"
                                   type="button"
-                                  onClick={() => onRetryNotification(order.id, latestNotification.id)}
-                                  disabled={orderActionPending[latestNotification.id] === 'retry-notification'}
+                                  onClick={() =>
+                                    onRetryNotification(order.id, latestNotification.id)
+                                  }
+                                  disabled={
+                                    orderActionPending[latestNotification.id] ===
+                                    'retry-notification'
+                                  }
                                 >
-                                  {orderActionPending[latestNotification.id] === 'retry-notification'
+                                  {orderActionPending[latestNotification.id] ===
+                                  'retry-notification'
                                     ? 'Reintentando…'
                                     : 'Reintentar notificación'}
                                 </button>
@@ -1197,37 +1189,88 @@ export default function AdminHomePage() {
 
                       <div className="stack">
                         {order.status === 'pending_acceptance' ? (
-                          <div className="form-grid form-row--inline compact-card">
-                            <button
-                              className="button button--primary"
-                              type="button"
-                              onClick={() => onOrderAction(order.id, 'accept')}
-                              disabled={Boolean(pendingAction)}
-                            >
-                              {pendingAction === 'accept' ? 'Aceptando…' : 'Aceptar orden'}
-                            </button>
-                            <label className="field">
-                              <span className="field-label">Motivo de rechazo</span>
-                              <input
-                                placeholder="Explica por qué no puede prepararse"
-                                value={rejectReasons[order.id] ?? ''}
-                                onChange={(event) =>
-                                  setRejectReasons((current) => ({
-                                    ...current,
-                                    [order.id]: event.target.value,
-                                  }))
-                                }
+                          <div className="stack compact-card">
+                            <div className="surface-soft stack order-prevention-panel">
+                              <div className="toolbar">
+                                <div className="stack" style={{ gap: '0.3rem' }}>
+                                  <span className="kicker">Antes de rechazar</span>
+                                  <strong>
+                                    El rechazo debe ser la excepción, no la ruta normal.
+                                  </strong>
+                                  <span className="field-help">
+                                    Elige primero la acción al nivel correcto para evitar rechazos
+                                    prevenibles.
+                                  </span>
+                                </div>
+                                <button
+                                  className="button button--primary"
+                                  type="button"
+                                  onClick={() => onOrderAction(order.id, 'accept')}
+                                  disabled={Boolean(pendingAction)}
+                                >
+                                  {pendingAction === 'accept' ? 'Aceptando…' : 'Aceptar orden'}
+                                </button>
+                              </div>
+                              <ul className="admin-guidance-list">
+                                {preventionMessages.map((message) => (
+                                  <li key={`${order.id}-${message}`}>{message}</li>
+                                ))}
+                              </ul>
+                              <div className="inline-actions inline-actions--tight">
+                                <button
+                                  className="button button--secondary"
+                                  type="button"
+                                  onClick={() =>
+                                    prefillPause(
+                                      'inventory_issue',
+                                      `Pausa preventiva iniciada desde orden ${order.id} por rechazo repetido o causa transversal.`,
+                                    )
+                                  }
+                                  disabled={Boolean(pendingAction)}
+                                >
+                                  Pausar order-ahead
+                                </button>
+                                <button
+                                  className="button button--ghost"
+                                  type="button"
+                                  onClick={jumpToMenuStock}
+                                  disabled={Boolean(pendingAction)}
+                                >
+                                  Revisar stock del menú
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="form-grid form-row--inline compact-card order-exception-row">
+                              <label className="field">
+                                <span className="field-label">Motivo obligatorio de rechazo</span>
+                                <input
+                                  placeholder="Documenta por qué esta orden sí requiere excepción"
+                                  value={rejectReasons[order.id] ?? ''}
+                                  onChange={(event) =>
+                                    setRejectReasons((current) => ({
+                                      ...current,
+                                      [order.id]: event.target.value,
+                                    }))
+                                  }
+                                  disabled={Boolean(pendingAction)}
+                                />
+                                <span className="field-help">
+                                  Usa rechazo sólo cuando no alcance con aceptar, pausar order-ahead
+                                  o ajustar stock.
+                                </span>
+                              </label>
+                              <button
+                                className="button button--ghost order-exception-button"
+                                type="button"
+                                onClick={() => onRejectOrder(order.id)}
                                 disabled={Boolean(pendingAction)}
-                              />
-                            </label>
-                            <button
-                              className="button button--soft-danger"
-                              type="button"
-                              onClick={() => onRejectOrder(order.id)}
-                              disabled={Boolean(pendingAction)}
-                            >
-                              {pendingAction === 'reject' ? 'Rechazando…' : 'Rechazar'}
-                            </button>
+                              >
+                                {pendingAction === 'reject'
+                                  ? 'Rechazando…'
+                                  : 'Rechazar como excepción'}
+                              </button>
+                            </div>
                           </div>
                         ) : null}
 
@@ -1308,202 +1351,205 @@ export default function AdminHomePage() {
             )}
           </SectionCard>
 
-          <SectionCard>
-            <CardHeader>
-              <div className="stack">
-                <h2>Menú</h2>
-                <p>
-                  Configura productos con bloques más claros para creación, attach y visibilidad por
-                  sucursal.
-                </p>
-              </div>
-            </CardHeader>
-            {menuError ? <InlineFeedback tone="error" message={menuError} /> : null}
-            {menuLoading ? (
-              <LoadingBlock label="Cargando configuración del menú…" />
-            ) : (
-              <>
-                <div className="stack compact-list">
-                  <InlineFeedback
-                    tone="info"
-                    message="Flujo único del menú: primero crea el producto base, luego adjúntalo a la sucursal activa y finalmente revisa la configuración visible."
-                  />
-                  <div className="menu-config-grid">
-                    <form
-                      onSubmit={onCreateBaseItem}
-                      className="section-card compact-card"
-                      style={{ padding: '1.1rem' }}
-                    >
-                      <div className="stack">
-                        <h3>Crear producto base</h3>
-                        <p className="helper-text">
-                          Define el producto reusable una sola vez antes de asignarlo a sucursales.
-                        </p>
-                      </div>
-                      <label className="field">
-                        <span className="field-label">Code</span>
-                        <input
-                          value={createCode}
-                          onChange={(event) => setCreateCode(event.target.value)}
-                          placeholder="latte_12oz"
-                        />
-                      </label>
-                      <label className="field">
-                        <span className="field-label">Nombre</span>
-                        <input
-                          value={createName}
-                          onChange={(event) => setCreateName(event.target.value)}
-                          placeholder="Latte"
-                        />
-                      </label>
-                      <label className="field">
-                        <span className="field-label">Descripción</span>
-                        <textarea
-                          value={createDescription}
-                          onChange={(event) => setCreateDescription(event.target.value)}
-                          placeholder="Notas breves para equipo y cliente"
-                        />
-                      </label>
-                      <button
-                        className="button button--primary"
-                        type="submit"
-                        disabled={menuActionLoading === 'create'}
-                      >
-                        {menuActionLoading === 'create' ? 'Creando…' : 'Crear producto'}
-                      </button>
-                    </form>
-
-                    <form
-                      onSubmit={onAttachItem}
-                      className="section-card compact-card"
-                      style={{ padding: '1.1rem' }}
-                    >
-                      <div className="stack">
-                        <h3>Adjuntar a sucursal</h3>
-                        <p className="helper-text">
-                          Convierte un producto base en una opción vendible dentro de la tienda
-                          activa.
-                        </p>
-                      </div>
-                      <label className="field">
-                        <span className="field-label">Producto base</span>
-                        <select
-                          value={attachMenuItemId}
-                          onChange={(event) => setAttachMenuItemId(event.target.value)}
-                        >
-                          {menuOverview?.availableBaseItems.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="field">
-                        <span className="field-label">Precio CLP</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={attachPriceAmount}
-                          onChange={(event) => setAttachPriceAmount(event.target.value)}
-                        />
-                      </label>
-                      <button
-                        className="button button--primary"
-                        type="submit"
-                        disabled={menuActionLoading === 'attach'}
-                      >
-                        {menuActionLoading === 'attach' ? 'Adjuntando…' : 'Adjuntar producto'}
-                      </button>
-                    </form>
-                  </div>
+          <div id="admin-menu">
+            <SectionCard>
+              <CardHeader>
+                <div className="stack">
+                  <h2>Menú</h2>
+                  <p>
+                    Configura productos con bloques más claros para creación, attach y visibilidad
+                    por sucursal.
+                  </p>
                 </div>
+              </CardHeader>
+              {menuError ? <InlineFeedback tone="error" message={menuError} /> : null}
+              {menuLoading ? (
+                <LoadingBlock label="Cargando configuración del menú…" />
+              ) : (
+                <>
+                  <div className="stack compact-list">
+                    <InlineFeedback
+                      tone="info"
+                      message="Flujo único del menú: primero crea el producto base, luego adjúntalo a la sucursal activa y finalmente revisa la configuración visible."
+                    />
+                    <div className="menu-config-grid">
+                      <form
+                        onSubmit={onCreateBaseItem}
+                        className="section-card compact-card"
+                        style={{ padding: '1.1rem' }}
+                      >
+                        <div className="stack">
+                          <h3>Crear producto base</h3>
+                          <p className="helper-text">
+                            Define el producto reusable una sola vez antes de asignarlo a
+                            sucursales.
+                          </p>
+                        </div>
+                        <label className="field">
+                          <span className="field-label">Code</span>
+                          <input
+                            value={createCode}
+                            onChange={(event) => setCreateCode(event.target.value)}
+                            placeholder="latte_12oz"
+                          />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Nombre</span>
+                          <input
+                            value={createName}
+                            onChange={(event) => setCreateName(event.target.value)}
+                            placeholder="Latte"
+                          />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Descripción</span>
+                          <textarea
+                            value={createDescription}
+                            onChange={(event) => setCreateDescription(event.target.value)}
+                            placeholder="Notas breves para equipo y cliente"
+                          />
+                        </label>
+                        <button
+                          className="button button--primary"
+                          type="submit"
+                          disabled={menuActionLoading === 'create'}
+                        >
+                          {menuActionLoading === 'create' ? 'Creando…' : 'Crear producto'}
+                        </button>
+                      </form>
 
-                <div className="stack compact-list">
-                  <h3>Configuración actual</h3>
-                  {menuOverview?.configuredItems.length ? (
-                    <div className="list-grid compact-list">
-                      {menuOverview.configuredItems.map((item) => {
-                        const pending = menuActionLoading === item.menuItemId;
-                        return (
-                          <article
-                            key={item.storeMenuItemId}
-                            className="menu-item-card compact-card"
+                      <form
+                        onSubmit={onAttachItem}
+                        className="section-card compact-card"
+                        style={{ padding: '1.1rem' }}
+                      >
+                        <div className="stack">
+                          <h3>Adjuntar a sucursal</h3>
+                          <p className="helper-text">
+                            Convierte un producto base en una opción vendible dentro de la tienda
+                            activa.
+                          </p>
+                        </div>
+                        <label className="field">
+                          <span className="field-label">Producto base</span>
+                          <select
+                            value={attachMenuItemId}
+                            onChange={(event) => setAttachMenuItemId(event.target.value)}
                           >
-                            <div className="menu-item-card__header">
-                              <div className="stack" style={{ gap: '0.35rem' }}>
-                                <strong>{item.name}</strong>
-                                <span className="meta-text">{item.code}</span>
-                                {item.description ? (
-                                  <span className="meta-text">{item.description}</span>
-                                ) : null}
-                              </div>
-                              <div
-                                className="stack"
-                                style={{ gap: '0.35rem', alignItems: 'flex-end' }}
-                              >
-                                <strong>{formatClp(item.priceAmount)}</strong>
-                                <div className="chip-row">
-                                  <StatusChip
-                                    label={item.isVisible ? 'Activo' : 'Oculto'}
-                                    tone={item.isVisible ? 'success' : 'muted'}
-                                  />
-                                  <StatusChip
-                                    label={item.isInStock ? 'En stock' : 'Sin stock'}
-                                    tone={item.isInStock ? 'info' : 'warning'}
-                                  />
+                            {menuOverview?.availableBaseItems.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Precio CLP</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={attachPriceAmount}
+                            onChange={(event) => setAttachPriceAmount(event.target.value)}
+                          />
+                        </label>
+                        <button
+                          className="button button--primary"
+                          type="submit"
+                          disabled={menuActionLoading === 'attach'}
+                        >
+                          {menuActionLoading === 'attach' ? 'Adjuntando…' : 'Adjuntar producto'}
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+
+                  <div className="stack compact-list">
+                    <h3>Configuración actual</h3>
+                    {menuOverview?.configuredItems.length ? (
+                      <div className="list-grid compact-list">
+                        {menuOverview.configuredItems.map((item) => {
+                          const pending = menuActionLoading === item.menuItemId;
+                          return (
+                            <article
+                              key={item.storeMenuItemId}
+                              className="menu-item-card compact-card"
+                            >
+                              <div className="menu-item-card__header">
+                                <div className="stack" style={{ gap: '0.35rem' }}>
+                                  <strong>{item.name}</strong>
+                                  <span className="meta-text">{item.code}</span>
+                                  {item.description ? (
+                                    <span className="meta-text">{item.description}</span>
+                                  ) : null}
+                                </div>
+                                <div
+                                  className="stack"
+                                  style={{ gap: '0.35rem', alignItems: 'flex-end' }}
+                                >
+                                  <strong>{formatClp(item.priceAmount)}</strong>
+                                  <div className="chip-row">
+                                    <StatusChip
+                                      label={item.isVisible ? 'Activo' : 'Oculto'}
+                                      tone={item.isVisible ? 'success' : 'muted'}
+                                    />
+                                    <StatusChip
+                                      label={item.isInStock ? 'En stock' : 'Sin stock'}
+                                      tone={item.isInStock ? 'info' : 'warning'}
+                                    />
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                            <div className="inline-actions inline-actions--tight">
-                              <button
-                                className="button button--secondary"
-                                type="button"
-                                onClick={() =>
-                                  onUpdateStoreItem(item.menuItemId, {
-                                    priceAmount: item.priceAmount,
-                                    isVisible: !item.isVisible,
-                                    isInStock: item.isInStock,
-                                    sortOrder: item.sortOrder,
-                                  })
-                                }
-                                disabled={pending}
-                              >
-                                {pending
-                                  ? 'Actualizando…'
-                                  : item.isVisible
-                                    ? 'Ocultar producto'
-                                    : 'Mostrar producto'}
-                              </button>
-                              <button
-                                className="button button--ghost"
-                                type="button"
-                                onClick={() =>
-                                  onUpdateStoreItem(item.menuItemId, {
-                                    priceAmount: item.priceAmount,
-                                    isVisible: item.isVisible,
-                                    isInStock: !item.isInStock,
-                                    sortOrder: item.sortOrder,
-                                  })
-                                }
-                                disabled={pending}
-                              >
-                                {item.isInStock ? 'Marcar sin stock' : 'Marcar con stock'}
-                              </button>
-                            </div>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <EmptyState
-                      title="Sin productos configurados"
-                      description="Primero crea o adjunta un producto para que esta sucursal pueda venderlo."
-                    />
-                  )}
-                </div>
-              </>
-            )}
-          </SectionCard>
+                              <div className="inline-actions inline-actions--tight">
+                                <button
+                                  className="button button--secondary"
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateStoreItem(item.menuItemId, {
+                                      priceAmount: item.priceAmount,
+                                      isVisible: !item.isVisible,
+                                      isInStock: item.isInStock,
+                                      sortOrder: item.sortOrder,
+                                    })
+                                  }
+                                  disabled={pending}
+                                >
+                                  {pending
+                                    ? 'Actualizando…'
+                                    : item.isVisible
+                                      ? 'Ocultar producto'
+                                      : 'Mostrar producto'}
+                                </button>
+                                <button
+                                  className="button button--ghost"
+                                  type="button"
+                                  onClick={() =>
+                                    onUpdateStoreItem(item.menuItemId, {
+                                      priceAmount: item.priceAmount,
+                                      isVisible: item.isVisible,
+                                      isInStock: !item.isInStock,
+                                      sortOrder: item.sortOrder,
+                                    })
+                                  }
+                                  disabled={pending}
+                                >
+                                  {item.isInStock ? 'Marcar sin stock' : 'Marcar con stock'}
+                                </button>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <EmptyState
+                        title="Sin productos configurados"
+                        description="Primero crea o adjunta un producto para que esta sucursal pueda venderlo."
+                      />
+                    )}
+                  </div>
+                </>
+              )}
+            </SectionCard>
+          </div>
         </div>
 
         <div className="stack">

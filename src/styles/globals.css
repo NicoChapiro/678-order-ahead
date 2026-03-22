@@ -491,6 +491,33 @@ ul {
   border: 1px solid #d8e3f7;
 }
 
+.order-prevention-panel {
+  border-color: #ccddff;
+  background: linear-gradient(180deg, rgba(232, 240, 255, 0.95), rgba(255, 255, 255, 0.96));
+}
+
+.admin-guidance-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  list-style: disc;
+  color: var(--muted-strong);
+  display: grid;
+  gap: 0.45rem;
+}
+
+.order-exception-row {
+  padding: 0.9rem 1rem;
+  border-radius: 18px;
+  border: 1px dashed #efbcbc;
+  background: rgba(253, 236, 236, 0.45);
+}
+
+.order-exception-button {
+  color: #8f2d2d;
+  border-color: #efbcbc;
+  background: rgba(255, 255, 255, 0.7);
+}
+
 .button--soft-danger {
   background: #fce6e6;
   color: #a23535;
