@@ -691,3 +691,47 @@ ul {
     height: 44px;
   }
 }
+
+.auth-page-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.auth-panel {
+  width: min(100%, 460px);
+  margin: 0 auto;
+}
+
+.auth-panel,
+.auth-panel__header,
+.auth-form {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.auth-panel__header h1 {
+  margin: 0;
+}
+
+.auth-form__label-row {
+  justify-content: space-between;
+}
+
+.auth-form__submit {
+  margin-top: 0.25rem;
+}
+
+.auth-form__note {
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .auth-page-shell {
+    min-height: auto;
+  }
+
+  .auth-panel {
+    width: 100%;
+  }
+}
