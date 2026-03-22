@@ -11,8 +11,11 @@ import {
   MenuItemUnavailableError,
   OrderAheadUnavailableError,
   OrderInsufficientFundsError,
+  OrderNotFoundError,
+  OrderNotificationRetryError,
   OrderValidationError,
   rejectOrder,
+  retryOrderNotification,
 } from '@/server/modules/orders/service';
 import type {
   CreateOrderEventInput,
@@ -29,6 +32,7 @@ import type {
   OrderStatus,
   StoreOrderContext,
   StoreOrderMenuItem,
+  UpdateOrderNotificationInput,
   UpdateOrderStatusInput,
 } from '@/server/modules/orders/types';
 import type {
@@ -238,10 +242,28 @@ class InMemoryOrderRepository implements OrderRepository {
       recipientCustomerIdentifier: input.recipientCustomerIdentifier ?? null,
       payloadJson: input.payloadJson ?? null,
       failureReason: input.failureReason ?? null,
+      attemptCount: input.attemptCount ?? 0,
       createdAt: input.createdAt,
       processedAt: input.processedAt ?? null,
+      updatedAt: input.updatedAt ?? input.createdAt,
     };
     this.orderNotifications.push(notification);
+    return notification;
+  }
+
+  async updateOrderNotification(input: UpdateOrderNotificationInput) {
+    const notification = this.orderNotifications.find((entry) => entry.id === input.notificationId) ?? null;
+    if (!notification) {
+      return null;
+    }
+
+    if (input.status !== undefined) notification.status = input.status;
+    if (input.payloadJson !== undefined) notification.payloadJson = input.payloadJson;
+    if (input.failureReason !== undefined) notification.failureReason = input.failureReason;
+    if (input.attemptCount !== undefined) notification.attemptCount = input.attemptCount;
+    if (input.processedAt !== undefined) notification.processedAt = input.processedAt;
+    notification.updatedAt = input.updatedAt;
+
     return notification;
   }
 
@@ -542,6 +564,99 @@ describe('order service', () => {
 
     expect(duplicate.transitionApplied).toBe(false);
     expect(duplicate.customerFlags.noShowCount).toBe(1);
+  });
+
+  it('notifications for key transitions are processed with attempt tracking', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+
+    const accepted = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+    expect(accepted.notification).toMatchObject({
+      notificationType: 'order_accepted',
+      status: 'sent',
+      attemptCount: 1,
+    });
+
+    const ready = await markOrderReadyForPickup(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'barista',
+    });
+    expect(ready.notification).toMatchObject({
+      notificationType: 'order_ready',
+      status: 'sent',
+      attemptCount: 1,
+    });
+
+    const completed = await completeOrder(repository, {
+      orderId: order.id,
+      actorUserId: 'staff-1',
+      actorRole: 'owner',
+    });
+    expect(completed.notification).toMatchObject({
+      notificationType: 'order_completed',
+      status: 'sent',
+      attemptCount: 1,
+    });
+  });
+
+  it('retrying a failed notification increments attempt count and clears the error', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+    const accepted = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+
+    const failedNotification = await repository.updateOrderNotification({
+      notificationId: accepted.notification!.id,
+      status: 'failed',
+      failureReason: 'Temporary internal processing error.',
+      attemptCount: 1,
+      processedAt: accepted.notification!.processedAt,
+      updatedAt: '2026-01-01T00:10:00.000Z',
+    });
+
+    expect(failedNotification?.status).toBe('failed');
+
+    const retried = await retryOrderNotification(repository, {
+      orderId: order.id,
+      notificationId: accepted.notification!.id,
+    });
+
+    expect(retried.transitionApplied).toBe(false);
+    expect(retried.notification).toMatchObject({
+      id: accepted.notification!.id,
+      status: 'sent',
+      attemptCount: 2,
+      failureReason: null,
+    });
+  });
+
+  it('retry rejects missing or non-failed notifications', async () => {
+    const order = await createOrder(repository, {
+      customerIdentifier: 'demo-wallet-customer',
+      storeCode: 'store_1',
+      items: [{ menuItemId: 'menu-1', quantity: 1 }],
+    });
+    const accepted = await acceptOrder(repository, { orderId: order.id, actorUserId: 'staff-1', actorRole: 'barista' });
+
+    await expect(
+      retryOrderNotification(repository, {
+        orderId: order.id,
+        notificationId: accepted.notification!.id,
+      }),
+    ).rejects.toBeInstanceOf(OrderNotificationRetryError);
+
+    await expect(
+      retryOrderNotification(repository, {
+        orderId: order.id,
+        notificationId: 'notification-missing',
+      }),
+    ).rejects.toBeInstanceOf(OrderNotFoundError);
   });
 
   it('duplicate admin actions do not corrupt state', async () => {

@@ -29,6 +29,7 @@ import type {
   OrderStatus,
   StoreOrderContext,
   StoreOrderMenuItem,
+  UpdateOrderNotificationInput,
   UpdateOrderStatusInput,
 } from '@/server/modules/orders/types';
 import type {
@@ -145,8 +146,10 @@ function mapOrderNotification(row: typeof orderNotifications.$inferSelect): Orde
     recipientCustomerIdentifier: row.recipientCustomerIdentifier,
     payloadJson: (row.payloadJson as Record<string, unknown> | null) ?? null,
     failureReason: row.failureReason,
+    attemptCount: row.attemptCount,
     createdAt: row.createdAt.toISOString(),
     processedAt: row.processedAt?.toISOString() ?? null,
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -277,7 +280,9 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
         ...buildOrderRecord(orderRow, orderEventsForOrder[0] ?? null),
         items: items.filter((item: OrderItem) => item.orderId === orderRow.id),
         events: orderEventsForOrder,
-        notifications: notifications.filter((notification: OrderNotificationRecord) => notification.orderId === orderRow.id),
+        notifications: notifications.filter(
+          (notification: OrderNotificationRecord) => notification.orderId === orderRow.id,
+        ),
       };
     });
   }
@@ -437,12 +442,44 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
           recipientCustomerIdentifier: input.recipientCustomerIdentifier ?? null,
           payloadJson: input.payloadJson ?? null,
           failureReason: input.failureReason ?? null,
+          attemptCount: input.attemptCount ?? 0,
           createdAt: new Date(input.createdAt),
           processedAt: input.processedAt ? new Date(input.processedAt) : null,
+          updatedAt: new Date(input.updatedAt ?? input.createdAt),
         })
         .returning();
 
       return mapOrderNotification(rows[0]);
+    },
+
+    async updateOrderNotification(input: UpdateOrderNotificationInput) {
+      const updateSet: Record<string, unknown> = {
+        updatedAt: new Date(input.updatedAt),
+      };
+
+      if (input.status !== undefined) {
+        updateSet.status = input.status;
+      }
+      if (input.payloadJson !== undefined) {
+        updateSet.payloadJson = input.payloadJson;
+      }
+      if (input.failureReason !== undefined) {
+        updateSet.failureReason = input.failureReason;
+      }
+      if (input.attemptCount !== undefined) {
+        updateSet.attemptCount = input.attemptCount;
+      }
+      if (input.processedAt !== undefined) {
+        updateSet.processedAt = input.processedAt ? new Date(input.processedAt) : null;
+      }
+
+      const rows = await resolveDatabase()
+        .update(orderNotifications)
+        .set(updateSet)
+        .where(eq(orderNotifications.id, input.notificationId))
+        .returning();
+
+      return rows[0] ? mapOrderNotification(rows[0]) : null;
     },
 
     async getCustomerOrderFlags(customerIdentifier) {
@@ -530,21 +567,6 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
         .from(walletLedgerEntries)
         .where(eq(walletLedgerEntries.walletId, walletId))
         .orderBy(desc(walletLedgerEntries.createdAt), desc(walletLedgerEntries.id));
-      return rows.map(mapLedgerEntry);
-    },
-
-    async listReferenceEntries(walletId, referenceType, referenceId) {
-      const rows = await resolveDatabase()
-        .select()
-        .from(walletLedgerEntries)
-        .where(
-          and(
-            eq(walletLedgerEntries.walletId, walletId),
-            eq(walletLedgerEntries.referenceType, referenceType),
-            eq(walletLedgerEntries.referenceId, referenceId),
-          ),
-        )
-        .orderBy(desc(walletLedgerEntries.createdAt), desc(walletLedgerEntries.id));
 
       return rows.map(mapLedgerEntry);
     },
@@ -585,12 +607,35 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
       return rows[0] ? mapTopupRequest(rows[0]) : null;
     },
 
+    async listReferenceEntries(walletId, referenceType, referenceId) {
+      const rows = await resolveDatabase()
+        .select()
+        .from(walletLedgerEntries)
+        .where(
+          and(
+            eq(walletLedgerEntries.walletId, walletId),
+            eq(walletLedgerEntries.referenceType, referenceType),
+            eq(walletLedgerEntries.referenceId, referenceId),
+          ),
+        )
+        .orderBy(desc(walletLedgerEntries.createdAt), desc(walletLedgerEntries.id));
+
+      return rows.map(mapLedgerEntry);
+    },
+
     async runInTransaction<T>(callback: (repository: OrderRepository) => Promise<T>): Promise<T> {
-      return resolveDatabase().transaction(async (tx: ReturnType<typeof getDb> | any) => {
-        return callback(makeOrderRepository(tx));
+      const db = resolveDatabase();
+      if (typeof db.transaction !== 'function') {
+        return callback(this);
+      }
+
+      return db.transaction(async (tx: any) => {
+        const transactionalRepository = makeOrderRepository(tx);
+        return callback(transactionalRepository);
       });
     },
   };
 }
 
 export const orderRepository = makeOrderRepository();
+export { makeOrderRepository };

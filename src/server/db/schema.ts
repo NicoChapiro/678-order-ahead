@@ -291,12 +291,16 @@ export const orderNotifications = pgTable(
     recipientCustomerIdentifier: varchar('recipient_customer_identifier', { length: 120 }),
     payloadJson: jsonb('payload_json').$type<Record<string, unknown> | null>(),
     failureReason: text('failure_reason'),
+    attemptCount: integer('attempt_count').default(0).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     processedAt: timestamp('processed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
     orderIdIdx: index('order_notifications_order_id_idx').on(table.orderId),
     createdAtIdx: index('order_notifications_created_at_idx').on(table.createdAt),
+    statusIdx: index('order_notifications_status_idx').on(table.status),
+    updatedAtIdx: index('order_notifications_updated_at_idx').on(table.updatedAt),
   }),
 );
 

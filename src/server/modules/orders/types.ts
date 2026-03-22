@@ -86,8 +86,10 @@ export type OrderNotificationRecord = {
   recipientCustomerIdentifier: string | null;
   payloadJson: Record<string, unknown> | null;
   failureReason: string | null;
+  attemptCount: number;
   createdAt: string;
   processedAt: string | null;
+  updatedAt: string;
 };
 
 export type OrderRecord = {
@@ -189,8 +191,20 @@ export type CreateOrderNotificationInput = {
   recipientCustomerIdentifier?: string | null;
   payloadJson?: Record<string, unknown> | null;
   failureReason?: string | null;
+  attemptCount?: number;
   createdAt: string;
   processedAt?: string | null;
+  updatedAt?: string;
+};
+
+export type UpdateOrderNotificationInput = {
+  notificationId: string;
+  status?: OrderNotificationStatus;
+  payloadJson?: Record<string, unknown> | null;
+  failureReason?: string | null;
+  attemptCount?: number;
+  processedAt?: string | null;
+  updatedAt: string;
 };
 
 export type OrderActionResult = {
@@ -215,6 +229,7 @@ export type OrderRepository = {
   updateOrderStatus(input: UpdateOrderStatusInput): Promise<OrderRecord | null>;
   createOrderEvent(input: CreateOrderEventInput): Promise<OrderEventRecord>;
   createOrderNotification(input: CreateOrderNotificationInput): Promise<OrderNotificationRecord>;
+  updateOrderNotification(input: UpdateOrderNotificationInput): Promise<OrderNotificationRecord | null>;
   getCustomerOrderFlags(customerIdentifier: string): Promise<CustomerOrderFlags | null>;
   incrementCustomerNoShowCount(customerIdentifier: string, actedAt: string): Promise<CustomerOrderFlags>;
   findWalletByCustomerIdentifier(customerIdentifier: string): Promise<CustomerWallet | null>;
