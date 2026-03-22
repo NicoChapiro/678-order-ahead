@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { customerAuthRepository } from '@/server/modules/customer-auth/repository';
 import {
-  resolveCustomerIdentifier,
-  setCustomerIdentifierCookie,
-} from '@/server/modules/customer-identity/session';
+  CustomerAuthError,
+  requireAuthenticatedCustomerSession,
+} from '@/server/modules/customer-auth/service';
 import { orderRepository } from '@/server/modules/orders/repository';
 import {
   createOrder,
@@ -13,7 +14,6 @@ import {
   OrderNotFoundError,
   OrderValidationError,
 } from '@/server/modules/orders/service';
-import { seedDemoWalletForNewCustomerSession } from '@/server/modules/wallet/service';
 
 const createOrderSchema = z.object({
   storeCode: z.enum(['store_1', 'store_2', 'store_3']),
@@ -33,27 +33,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: body.error.flatten() }, { status: 400 });
   }
 
-  const customerIdentity = resolveCustomerIdentifier(request);
+  let authenticatedSession;
 
   try {
-    if (customerIdentity.isNew) {
-      await seedDemoWalletForNewCustomerSession(
-        orderRepository,
-        customerIdentity.customerIdentifier,
-      );
+    authenticatedSession = await requireAuthenticatedCustomerSession(customerAuthRepository, request);
+  } catch (error) {
+    if (error instanceof CustomerAuthError) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
     }
 
+    return NextResponse.json({ error: 'No pudimos revisar tu sesión.' }, { status: 500 });
+  }
+
+  try {
     const order = await createOrder(orderRepository, {
       ...body.data,
-      customerIdentifier: customerIdentity.customerIdentifier,
+      customerIdentifier: authenticatedSession.customer.id,
     });
-    const response = NextResponse.json({ order }, { status: 201 });
 
-    if (customerIdentity.isNew) {
-      setCustomerIdentifierCookie(response, customerIdentity.customerIdentifier);
-    }
-
-    return response;
+    return NextResponse.json({ order }, { status: 201 });
   } catch (error) {
     if (error instanceof OrderValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
@@ -72,7 +70,7 @@ export async function POST(request: NextRequest) {
       'Unexpected error in create order route.',
       {
         storeCode: body.data.storeCode,
-        customerIdentifier: customerIdentity.customerIdentifier,
+        customerIdentifier: authenticatedSession.customer.id,
         itemCount: body.data.items.length,
       },
       error,

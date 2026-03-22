@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { customerAuthRepository } from '@/server/modules/customer-auth/repository';
 import {
-  resolveCustomerIdentifier,
-  setCustomerIdentifierCookie,
-} from '@/server/modules/customer-identity/session';
+  CustomerAuthError,
+  requireAuthenticatedCustomerSession,
+} from '@/server/modules/customer-auth/service';
 import { orderRepository } from '@/server/modules/orders/repository';
 import { listCustomerOrders, OrderValidationError } from '@/server/modules/orders/service';
 
@@ -11,19 +12,29 @@ export async function GET(
   context: { params: Promise<{ customerKey: string }> },
 ) {
   const { customerKey } = await context.params;
-  const customerIdentity = resolveCustomerIdentifier(request);
+
+  let authenticatedSession;
+
+  try {
+    authenticatedSession = await requireAuthenticatedCustomerSession(customerAuthRepository, request);
+  } catch (error) {
+    if (error instanceof CustomerAuthError) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
+
+    return NextResponse.json({ error: 'No pudimos revisar tu sesión.' }, { status: 500 });
+  }
+
   const customerIdentifier =
-    customerKey === 'me' ? customerIdentity.customerIdentifier : customerKey;
+    customerKey === 'me' ? authenticatedSession.customer.id : customerKey.trim();
+
+  if (customerIdentifier !== authenticatedSession.customer.id) {
+    return NextResponse.json({ error: 'No encontramos esos pedidos.' }, { status: 404 });
+  }
 
   try {
     const orders = await listCustomerOrders(orderRepository, customerIdentifier);
-    const response = NextResponse.json({ orders: Array.isArray(orders) ? orders : [] });
-
-    if (customerKey === 'me' && customerIdentity.isNew) {
-      setCustomerIdentifierCookie(response, customerIdentity.customerIdentifier);
-    }
-
-    return response;
+    return NextResponse.json({ orders: Array.isArray(orders) ? orders : [] });
   } catch (error) {
     if (error instanceof OrderValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });

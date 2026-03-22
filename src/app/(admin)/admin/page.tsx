@@ -246,7 +246,7 @@ export default function AdminHomePage() {
   const [attachPriceAmount, setAttachPriceAmount] = useState('2500');
   const [menuActionLoading, setMenuActionLoading] = useState<string | null>(null);
 
-  const [walletCustomerKey, setWalletCustomerKey] = useState('demo-wallet-customer');
+  const [walletCustomerKey, setWalletCustomerKey] = useState('+56912345678');
   const [walletSummary, setWalletSummary] = useState<WalletSummary | null>(null);
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
   const [walletError, setWalletError] = useState<string | null>(null);
@@ -362,7 +362,7 @@ export default function AdminHomePage() {
   async function loadWalletData(customerKey = walletCustomerKey) {
     const normalizedCustomerKey = customerKey.trim();
     if (!normalizedCustomerKey) {
-      setWalletError('Debes ingresar una customer key.');
+      setWalletError('Debes ingresar un teléfono o customer id.');
       return;
     }
 
@@ -411,7 +411,7 @@ export default function AdminHomePage() {
   }, [storeCode, orderStatusFilter]);
 
   useEffect(() => {
-    void loadWalletData('demo-wallet-customer');
+    void loadWalletData('+56912345678');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1565,16 +1565,16 @@ export default function AdminHomePage() {
             </CardHeader>
             <div className="surface-soft stack">
               <p>
-                Customer key demo sugerida: <code>demo-wallet-customer</code>
+                Busca por teléfono o customer id. Ejemplo: <code>+56912345678</code>
               </p>
               <form onSubmit={onLookupWallet} className="form-row form-row--inline">
                 <label className="field">
-                  <span className="field-label">Customer key</span>
+                  <span className="field-label">Teléfono o customer id</span>
                   <input
-                    aria-label="Customer key"
+                    aria-label="Teléfono o customer id"
                     value={walletCustomerKey}
                     onChange={(event) => setWalletCustomerKey(event.target.value)}
-                    placeholder="customer key"
+                    placeholder="+56912345678"
                   />
                 </label>
                 <button
@@ -1725,7 +1725,7 @@ export default function AdminHomePage() {
               !walletLoading && (
                 <EmptyState
                   title="Busca una wallet para operar"
-                  description="Ingresa una customer key para revisar balance, cargar saldo o aplicar ajustes."
+                  description="Ingresa un teléfono o customer id para revisar balance, cargar saldo o aplicar ajustes."
                 />
               )
             )}
