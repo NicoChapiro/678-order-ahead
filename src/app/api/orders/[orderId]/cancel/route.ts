@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getCustomerIdentifierFromRequest } from '@/server/modules/customer-identity/session';
+import { customerAuthRepository } from '@/server/modules/customer-auth/repository';
+import {
+  CustomerAuthError,
+  requireAuthenticatedCustomerSession,
+} from '@/server/modules/customer-auth/service';
 import { orderRepository } from '@/server/modules/orders/repository';
 import {
   cancelOrderByCustomer,
@@ -24,15 +28,22 @@ export async function POST(
     return NextResponse.json({ error: body.error.flatten() }, { status: 400 });
   }
 
-  const customerIdentifier = getCustomerIdentifierFromRequest(request);
-  if (!customerIdentifier) {
-    return NextResponse.json({ error: 'No encontramos tu sesión de pedido.' }, { status: 401 });
+  let authenticatedSession;
+
+  try {
+    authenticatedSession = await requireAuthenticatedCustomerSession(customerAuthRepository, request);
+  } catch (error) {
+    if (error instanceof CustomerAuthError) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
+
+    return NextResponse.json({ error: 'No pudimos revisar tu sesión.' }, { status: 500 });
   }
 
   try {
     const result = await cancelOrderByCustomer(orderRepository, {
       orderId,
-      customerIdentifier,
+      customerIdentifier: authenticatedSession.customer.id,
       ...body.data,
     });
     return NextResponse.json(result);

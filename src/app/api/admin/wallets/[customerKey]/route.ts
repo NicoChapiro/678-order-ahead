@@ -7,30 +7,18 @@ import {
 } from '@/server/modules/customer-auth/service';
 import { StaffAuthError, getRequiredStaffSession } from '@/server/modules/staff-auth/service';
 import { walletRepository } from '@/server/modules/wallet/repository';
-import {
-  createCashierTopup,
-  WalletPermissionError,
-  WalletValidationError,
-} from '@/server/modules/wallet/service';
+import { getWalletSummary, WalletValidationError } from '@/server/modules/wallet/service';
 
 const paramsSchema = z.object({
   customerKey: z.string().trim().min(1).max(120),
 });
 
-const createCashTopupSchema = z.object({
-  amount: z.number().int().positive(),
-  note: z.string().trim().max(400).optional(),
-  externalReference: z.string().trim().max(191).optional(),
-});
-
-export async function POST(
+export async function GET(
   request: NextRequest,
   context: { params: Promise<{ customerKey: string }> },
 ) {
-  let actor;
-
   try {
-    actor = await getRequiredStaffSession(request);
+    await getRequiredStaffSession(request);
   } catch (error) {
     if (error instanceof StaffAuthError) {
       return NextResponse.json({ error: error.message }, { status: 401 });
@@ -44,37 +32,20 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid customer key.' }, { status: 400 });
   }
 
-  const body = createCashTopupSchema.safeParse(await request.json());
-  if (!body.success) {
-    return NextResponse.json({ error: body.error.flatten() }, { status: 400 });
-  }
-
   try {
     const customerIdentifier = await resolveCustomerIdentifierReference(
       customerAuthRepository,
       params.data.customerKey,
-      { createIfPhoneNumber: true },
     );
+    const summary = await getWalletSummary(walletRepository, customerIdentifier);
 
-    const ledgerEntry = await createCashierTopup(walletRepository, {
-      customerIdentifier,
-      amount: body.data.amount,
-      note: body.data.note,
-      externalReference: body.data.externalReference,
-      actorUserId: actor.staffUserId,
-      actorRole: actor.role,
-    });
-
-    return NextResponse.json({ ledgerEntry }, { status: 201 });
+    return NextResponse.json(summary);
   } catch (error) {
-    if (error instanceof WalletPermissionError) {
-      return NextResponse.json({ error: error.message }, { status: 403 });
-    }
-
     if (error instanceof CustomerAuthValidationError || error instanceof WalletValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
+    console.error('Unexpected error in admin wallet summary route.', error);
     return NextResponse.json({ error: 'Unexpected error.' }, { status: 500 });
   }
 }

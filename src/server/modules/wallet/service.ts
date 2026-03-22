@@ -22,9 +22,6 @@ export class WalletConflictError extends Error {}
 const CASHIER_TOPUP_ROLES = new Set<WalletStaffRole>(['owner', 'barista']);
 const ADMIN_ADJUSTMENT_ROLES = new Set<WalletStaffRole>(['owner']);
 const MANUAL_TOPUP_REVIEW_ROLES = new Set<WalletStaffRole>(['owner', 'barista']);
-const DEMO_CUSTOMER_WALLET_SEED_REFERENCE_ID = 'demo-customer-session-seed';
-const DEMO_CUSTOMER_WALLET_SEED_NOTE = 'Demo seed balance for a new anonymous customer session.';
-
 function normalizeCustomerIdentifier(customerIdentifier: string) {
   const normalized = customerIdentifier.trim();
 
@@ -54,20 +51,6 @@ function validateSupportedRole(role: string, supportedRoles: Set<WalletStaffRole
 function normalizeOptionalText(value?: string | null) {
   const normalized = value?.trim();
   return normalized ? normalized : null;
-}
-
-function getDemoCustomerWalletSeedAmount() {
-  const rawValue = process.env.DEMO_CUSTOMER_WALLET_SEED_CLP?.trim();
-  if (!rawValue) {
-    return null;
-  }
-
-  const amount = Number(rawValue);
-  if (!Number.isInteger(amount) || amount <= 0) {
-    throw new WalletValidationError('DEMO_CUSTOMER_WALLET_SEED_CLP must be a positive integer.');
-  }
-
-  return amount;
 }
 
 function requireNote(note: string | null, message: string) {
@@ -126,40 +109,6 @@ export async function getWalletSummary(
     wallet,
     currentBalance,
   };
-}
-
-export async function seedDemoWalletForNewCustomerSession(
-  repository: WalletRepository,
-  customerIdentifier: string,
-) {
-  const amount = getDemoCustomerWalletSeedAmount();
-  if (amount === null) {
-    return null;
-  }
-
-  const wallet = await getOrCreateWallet(repository, customerIdentifier);
-  const existingEntries = await repository.listReferenceEntries(
-    wallet.id,
-    'admin_adjustment',
-    DEMO_CUSTOMER_WALLET_SEED_REFERENCE_ID,
-  );
-  const existingSeedEntry = existingEntries.find((entry) => entry.status === 'posted');
-
-  if (existingSeedEntry) {
-    return existingSeedEntry;
-  }
-
-  return repository.createLedgerEntry(
-    buildLedgerEntry({
-      walletId: wallet.id,
-      entryType: 'admin_adjustment_credit',
-      amountSigned: amount,
-      referenceType: 'admin_adjustment',
-      referenceId: DEMO_CUSTOMER_WALLET_SEED_REFERENCE_ID,
-      note: DEMO_CUSTOMER_WALLET_SEED_NOTE,
-      createdByRole: 'system',
-    }),
-  );
 }
 
 export async function listWalletTransactions(

@@ -137,6 +137,87 @@ export const staffSessions = pgTable(
   }),
 );
 
+export const customers = pgTable(
+  'customers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    phoneNumber: varchar('phone_number', { length: 32 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    phoneNumberUniqueIdx: uniqueIndex('customers_phone_number_unique_idx').on(table.phoneNumber),
+  }),
+);
+
+export const customerOtpChallenges = pgTable(
+  'customer_otp_challenges',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    phoneNumber: varchar('phone_number', { length: 32 }).notNull(),
+    codeHash: text('code_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    invalidatedAt: timestamp('invalidated_at', { withTimezone: true }),
+    attemptCount: integer('attempt_count').default(0).notNull(),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    customerIdIdx: index('customer_otp_challenges_customer_id_idx').on(table.customerId),
+    phoneNumberCreatedAtIdx: index('customer_otp_challenges_phone_number_created_at_idx').on(
+      table.phoneNumber,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const customerSessions = pgTable(
+  'customer_sessions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    customerIdIdx: index('customer_sessions_customer_id_idx').on(table.customerId),
+    tokenHashUniqueIdx: uniqueIndex('customer_sessions_token_hash_unique_idx').on(table.tokenHash),
+  }),
+);
+
+export const customerAuthRateLimits = pgTable(
+  'customer_auth_rate_limits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    action: varchar('action', { length: 64 }).notNull(),
+    scopeKey: varchar('scope_key', { length: 191 }).notNull(),
+    hitCount: integer('hit_count').default(0).notNull(),
+    windowStartedAt: timestamp('window_started_at', { withTimezone: true }).notNull(),
+    blockedUntil: timestamp('blocked_until', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    actionScopeUniqueIdx: uniqueIndex('customer_auth_rate_limits_action_scope_unique_idx').on(
+      table.action,
+      table.scopeKey,
+    ),
+    actionBlockedUntilIdx: index('customer_auth_rate_limits_action_blocked_until_idx').on(
+      table.action,
+      table.blockedUntil,
+    ),
+  }),
+);
+
 export const menuItems = pgTable(
   'menu_items',
   {
