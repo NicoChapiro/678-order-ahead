@@ -18,6 +18,7 @@ import type {
   CreateOrderEventInput,
   CreateOrderInput,
   CreateOrderItemInput,
+  ClaimInternalNotificationRetryInput,
   CreateOrderNotificationInput,
   CustomerOrderFlags,
   OrderDetail,
@@ -450,6 +451,29 @@ function makeOrderRepository(database?: ReturnType<typeof getDb> | any): OrderRe
         .returning();
 
       return mapOrderNotification(rows[0]);
+    },
+
+    async claimInternalNotificationRetry(input: ClaimInternalNotificationRetryInput) {
+      const rows = await resolveDatabase()
+        .update(orderNotifications)
+        .set({
+          status: 'pending',
+          failureReason: null,
+          processedAt: null,
+          attemptCount: sql`${orderNotifications.attemptCount} + 1`,
+          updatedAt: new Date(input.updatedAt),
+        })
+        .where(
+          and(
+            eq(orderNotifications.id, input.notificationId),
+            eq(orderNotifications.orderId, input.orderId),
+            eq(orderNotifications.channel, 'internal'),
+            eq(orderNotifications.status, 'failed'),
+          ),
+        )
+        .returning();
+
+      return rows[0] ? mapOrderNotification(rows[0]) : null;
     },
 
     async updateOrderNotification(input: UpdateOrderNotificationInput) {

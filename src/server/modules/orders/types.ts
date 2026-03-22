@@ -207,6 +207,12 @@ export type UpdateOrderNotificationInput = {
   updatedAt: string;
 };
 
+export type ClaimInternalNotificationRetryInput = {
+  orderId: string;
+  notificationId: string;
+  updatedAt: string;
+};
+
 export type OrderActionResult = {
   order: OrderDetail;
   transitionApplied: boolean;
@@ -230,6 +236,9 @@ export type OrderRepository = {
   createOrderEvent(input: CreateOrderEventInput): Promise<OrderEventRecord>;
   createOrderNotification(input: CreateOrderNotificationInput): Promise<OrderNotificationRecord>;
   updateOrderNotification(input: UpdateOrderNotificationInput): Promise<OrderNotificationRecord | null>;
+  claimInternalNotificationRetry(
+    input: ClaimInternalNotificationRetryInput,
+  ): Promise<OrderNotificationRecord | null>;
   getCustomerOrderFlags(customerIdentifier: string): Promise<CustomerOrderFlags | null>;
   incrementCustomerNoShowCount(customerIdentifier: string, actedAt: string): Promise<CustomerOrderFlags>;
   findWalletByCustomerIdentifier(customerIdentifier: string): Promise<CustomerWallet | null>;
