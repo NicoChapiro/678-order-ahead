@@ -7,7 +7,6 @@ import {
   EmptyState,
   InlineFeedback,
   LoadingBlock,
-  PageHeader,
   SectionCard,
   StatGrid,
   StatItem,
@@ -95,6 +94,30 @@ function formatDateTime(value: string) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
+}
+
+function getCalmErrorMessage(error: unknown, fallback: string) {
+  if (typeof error !== 'string') {
+    return fallback;
+  }
+
+  const normalizedError = error.trim();
+  if (!normalizedError) {
+    return fallback;
+  }
+
+  const loweredError = normalizedError.toLowerCase();
+  if (
+    loweredError.includes('unexpected error') ||
+    loweredError.includes('internal server error') ||
+    loweredError.includes('failed to fetch') ||
+    loweredError.includes('network') ||
+    loweredError.includes('fetch failed')
+  ) {
+    return fallback;
+  }
+
+  return normalizedError;
 }
 
 function getAvailabilityMessage(availability: Availability | null) {
@@ -254,7 +277,12 @@ export default function ClientHomePage() {
       if (!availabilityResponse.ok) {
         setAvailability(null);
         setMenu(null);
-        setError(availabilityPayload.error ?? 'No pudimos revisar la disponibilidad.');
+        setError(
+          getCalmErrorMessage(
+            availabilityPayload.error,
+            'La tienda no respondió. Vuelve a intentarlo en un momento.',
+          ),
+        );
         setStoreLoading(false);
         return;
       }
@@ -262,7 +290,9 @@ export default function ClientHomePage() {
       if (!menuResponse.ok) {
         setAvailability(availabilityPayload.availability as Availability);
         setMenu(null);
-        setError(menuPayload.error ?? 'No pudimos cargar el menú.');
+        setError(
+          getCalmErrorMessage(menuPayload.error, 'No pudimos cargar el menú. Intenta de nuevo.'),
+        );
         setStoreLoading(false);
         return;
       }
@@ -298,7 +328,9 @@ export default function ClientHomePage() {
 
     if (!response.ok) {
       setOrders([]);
-      setOrdersError(payload.error ?? 'No pudimos cargar tu pedido actual.');
+      setOrdersError(
+        getCalmErrorMessage(payload.error, 'No pudimos revisar el estado de tu pedido.'),
+      );
       setOrdersLoading(false);
       return;
     }
@@ -354,7 +386,9 @@ export default function ClientHomePage() {
     () =>
       sortedOrders.find((order) =>
         ['pending_acceptance', 'accepted', 'ready_for_pickup'].includes(order.status),
-      ) ?? sortedOrders[0] ?? null,
+      ) ??
+      sortedOrders[0] ??
+      null,
     [sortedOrders],
   );
 
@@ -386,7 +420,9 @@ export default function ClientHomePage() {
     const payload = await response.json();
 
     if (!response.ok) {
-      setOrderActionError(payload.error ?? 'No pudimos crear tu pedido.');
+      setOrderActionError(
+        getCalmErrorMessage(payload.error, 'No pudimos confirmar tu pedido. Intenta de nuevo.'),
+      );
       setPlacingOrder(false);
       return;
     }
@@ -422,7 +458,9 @@ export default function ClientHomePage() {
     setCancellingOrderId(null);
 
     if (!response.ok) {
-      setOrderActionError(payload.error ?? 'No pudimos cancelar tu pedido.');
+      setOrderActionError(
+        getCalmErrorMessage(payload.error, 'No pudimos cancelar tu pedido. Intenta de nuevo.'),
+      );
       return;
     }
 
@@ -436,55 +474,59 @@ export default function ClientHomePage() {
 
   return (
     <AppShell>
-      <PageHeader>
-        <div className="summary-card__title-row">
-          <div className="stack">
-            <span className="summary-card__eyebrow">Order ahead</span>
-            <h1>Pide antes de llegar</h1>
-            <p>Revisa si la tienda está disponible, arma tu café y sigue el estado hasta retiro.</p>
-          </div>
-          <div className="field summary-card__control">
-            <label className="field-label" htmlFor="store-select">
-              Tienda
-            </label>
-            <select
-              id="store-select"
-              value={storeCode}
-              onChange={(event) => setStoreCode(event.target.value as StoreCode)}
-            >
-              <option value="store_1">Store 1</option>
-            </select>
-          </div>
-        </div>
-      </PageHeader>
-
       <SummaryCard>
         <div className="summary-card__title-row">
           <div className="stack">
-            <span className="summary-card__eyebrow">1. Disponibilidad</span>
-            <h2>{availability?.storeName ?? 'Tu tienda'}</h2>
+            <span className="summary-card__eyebrow">Order ahead</span>
+            <h1>{availability?.storeName ?? 'Tu tienda'}</h1>
             <p>{getAvailabilityMessage(availability)}</p>
           </div>
-          <StatusChip
-            label={availability?.isOrderAheadEnabled ? 'Disponible' : 'No disponible'}
-            tone={getStatusTone(availability?.isOrderAheadEnabled ? 'available' : 'unavailable')}
-          />
+          <div className="stack" style={{ gap: '0.75rem', alignItems: 'flex-end' }}>
+            <StatusChip
+              label={availability?.isOrderAheadEnabled ? 'Disponible' : 'No disponible'}
+              tone={getStatusTone(availability?.isOrderAheadEnabled ? 'available' : 'unavailable')}
+            />
+            <div className="field summary-card__control">
+              <label className="field-label" htmlFor="store-select">
+                Tienda
+              </label>
+              <select
+                id="store-select"
+                value={storeCode}
+                onChange={(event) => setStoreCode(event.target.value as StoreCode)}
+              >
+                <option value="store_1">Store 1</option>
+              </select>
+            </div>
+          </div>
         </div>
         <StatGrid>
           <StatItem
             label="Tienda"
             value={availability?.storeName ?? storeCode}
-            helper={availability ? `Actualizado ${formatDateTime(availability.updatedAt)}` : 'Cargando'}
+            helper={
+              availability
+                ? `Actualizado ${formatDateTime(availability.updatedAt)}`
+                : 'Revisando disponibilidad'
+            }
           />
           <StatItem
             label="Estado"
-            value={availability?.isOrderAheadEnabled ? 'Puedes pedir ahora' : 'Pedidos pausados'}
-            helper={availability?.isOrderAheadEnabled ? 'Retiro rápido en tienda.' : 'Te avisamos aquí cuando vuelva.'}
+            value={availability?.isOrderAheadEnabled ? 'Puedes pedir ahora' : 'No disponible ahora'}
+            helper={
+              availability?.isOrderAheadEnabled
+                ? 'Haz tu pedido y pasa a retirar.'
+                : 'Vuelve a intentar en unos minutos.'
+            }
           />
           <StatItem
-            label="Qué sigue"
-            value={availability?.isOrderAheadEnabled ? 'Elige tu pedido' : 'Vuelve a intentar más tarde'}
-            helper={availability?.isOrderAheadEnabled ? 'Agrega productos y confirma.' : 'La tienda no está recibiendo pedidos ahora.'}
+            label="Siguiente paso"
+            value={availability?.isOrderAheadEnabled ? 'Elige tu café' : 'Espera un momento'}
+            helper={
+              availability?.isOrderAheadEnabled
+                ? 'Agrega productos y confirma.'
+                : 'Te mostraremos aquí cuando vuelva.'
+            }
           />
         </StatGrid>
         {!availability?.isOrderAheadEnabled && availability ? (
@@ -496,12 +538,12 @@ export default function ClientHomePage() {
         {error ? <InlineFeedback tone="error" message={error} /> : null}
       </SummaryCard>
 
-      <SectionCard>
+      <SectionCard className="section-card--order-focus">
         <CardHeader>
           <div className="stack">
-            <span className="summary-card__eyebrow">2. Elige y pide</span>
-            <h2>Menú para pedir rápido</h2>
-            <p>Selecciona cantidades, revisa el total y confirma en un solo paso.</p>
+            <span className="summary-card__eyebrow">1. Elige y pide</span>
+            <h2>Elige tu pedido</h2>
+            <p>Agrega lo que quieras y confirma en segundos.</p>
           </div>
           {availability ? (
             <StatusChip
@@ -511,7 +553,9 @@ export default function ClientHomePage() {
           ) : null}
         </CardHeader>
         {orderActionError ? <InlineFeedback tone="error" message={orderActionError} /> : null}
-        {orderActionFeedback ? <InlineFeedback tone="success" message={orderActionFeedback} /> : null}
+        {orderActionFeedback ? (
+          <InlineFeedback tone="success" message={orderActionFeedback} />
+        ) : null}
         {storeLoading ? (
           <LoadingBlock label="Cargando menú…" />
         ) : !menu ? (
@@ -531,11 +575,16 @@ export default function ClientHomePage() {
                 const quantity = quantities[item.menuItemId] ?? 0;
 
                 return (
-                  <article key={item.storeMenuItemId} className="menu-item-card compact-card">
+                  <article
+                    key={item.storeMenuItemId}
+                    className="menu-item-card compact-card menu-item-card--priority"
+                  >
                     <div className="menu-item-card__header">
                       <div className="stack" style={{ gap: '0.35rem' }}>
                         <strong>{item.name}</strong>
-                        {item.description ? <span className="meta-text">{item.description}</span> : null}
+                        {item.description ? (
+                          <span className="meta-text">{item.description}</span>
+                        ) : null}
                         <div className="chip-row">
                           <StatusChip
                             label={item.isInStock ? 'Disponible' : 'Sin stock'}
@@ -548,6 +597,7 @@ export default function ClientHomePage() {
                     <div className="toolbar transaction-meta">
                       <div className="quantity-control" aria-label={`Cantidad de ${item.name}`}>
                         <button
+                          className="quantity-control__button quantity-control__button--secondary"
                           type="button"
                           onClick={() =>
                             setQuantities((current) => ({
@@ -561,6 +611,7 @@ export default function ClientHomePage() {
                         </button>
                         <span className="quantity-display">{quantity}</span>
                         <button
+                          className="quantity-control__button quantity-control__button--primary"
                           type="button"
                           onClick={() =>
                             setQuantities((current) => ({
@@ -573,11 +624,11 @@ export default function ClientHomePage() {
                           +
                         </button>
                       </div>
-                      <span className="meta-text">
-                        {quantity > 0
-                          ? `Subtotal ${formatClp(quantity * item.priceAmount)}`
-                          : 'Toca + para agregar'}
-                      </span>
+                      {quantity > 0 ? (
+                        <span className="meta-text">
+                          Subtotal {formatClp(quantity * item.priceAmount)}
+                        </span>
+                      ) : null}
                     </div>
                   </article>
                 );
@@ -588,7 +639,7 @@ export default function ClientHomePage() {
               <div className="toolbar transaction-meta">
                 <div className="stack" style={{ gap: '0.2rem' }}>
                   <span className="row-label">Total</span>
-                  <strong style={{ fontSize: '1.8rem' }}>{formatClp(orderTotal)}</strong>
+                  <strong style={{ fontSize: '2rem' }}>{formatClp(orderTotal)}</strong>
                 </div>
                 <div className="stack" style={{ gap: '0.2rem', alignItems: 'flex-end' }}>
                   <span className="row-label">Productos</span>
@@ -598,27 +649,35 @@ export default function ClientHomePage() {
               <button
                 className="button button--primary button--block"
                 type="submit"
-                disabled={selectedItems.length === 0 || placingOrder || !availability?.isOrderAheadEnabled}
+                disabled={
+                  selectedItems.length === 0 || placingOrder || !availability?.isOrderAheadEnabled
+                }
               >
                 {placingOrder ? 'Enviando pedido…' : 'Pedir ahora'}
               </button>
               {!availability?.isOrderAheadEnabled ? (
-                <span className="field-help">La tienda debe estar disponible para confirmar tu pedido.</span>
+                <span className="field-help">
+                  La tienda debe estar disponible para confirmar tu pedido.
+                </span>
               ) : null}
             </div>
           </form>
         )}
       </SectionCard>
 
-      <SectionCard>
+      <SectionCard className={!featuredOrder ? 'section-card--compact' : undefined}>
         <CardHeader>
           <div className="stack">
-            <span className="summary-card__eyebrow">3. Sigue tu pedido</span>
+            <span className="summary-card__eyebrow">2. Estado actual</span>
             <h2>Estado actual</h2>
-            <p>Te mostramos primero lo que importa para saber cuándo pasar a retirar.</p>
+            <p>
+              {featuredOrder
+                ? 'Revisa si ya fue recibido, está en preparación o listo para retiro.'
+                : 'Cuando hagas un pedido, verás su estado aquí.'}
+            </p>
           </div>
           <StatusChip
-            label={featuredOrder ? getStatusLabel(featuredOrder.status) : 'Sin pedido activo'}
+            label={featuredOrder ? getStatusLabel(featuredOrder.status) : 'Sin pedido'}
             tone={getStatusTone(featuredOrder?.status ?? 'neutral')}
           />
         </CardHeader>
@@ -627,8 +686,8 @@ export default function ClientHomePage() {
           <LoadingBlock label="Buscando tu pedido actual…" />
         ) : !featuredOrder ? (
           <EmptyState
-            title="Todavía no hay un pedido para seguir"
-            description="Cuando confirmes tu pedido, verás aquí si fue recibido, está en preparación o listo para retiro."
+            title="Sin pedido activo"
+            description="Cuando confirmes uno, verás aquí si fue recibido, está en preparación o listo para retiro."
           />
         ) : (
           <div className="stack">
@@ -664,7 +723,9 @@ export default function ClientHomePage() {
                 </div>
                 <div className="meta-block">
                   <span className="row-label">Listo para retiro</span>
-                  <strong>{featuredOrder.readyAt ? formatDateTime(featuredOrder.readyAt) : 'Aún no'}</strong>
+                  <strong>
+                    {featuredOrder.readyAt ? formatDateTime(featuredOrder.readyAt) : 'Aún no'}
+                  </strong>
                 </div>
               </div>
 
