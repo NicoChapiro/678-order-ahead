@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { customerAuthRateLimitRepository } from '@/server/modules/customer-auth/rate-limit-repository';
+import {
+  assertOtpVerifyAllowed,
+  clearOtpVerifyFailures,
+  CustomerAuthRateLimitError,
+  getRequestIpAddress,
+  recordOtpVerifyFailure,
+} from '@/server/modules/customer-auth/rate-limit';
 import { customerAuthRepository } from '@/server/modules/customer-auth/repository';
 import { setCustomerSessionCookie } from '@/server/modules/customer-auth/session';
 import {
@@ -7,6 +15,7 @@ import {
   CustomerAuthExpiredOtpError,
   CustomerAuthInvalidOtpError,
   CustomerAuthValidationError,
+  normalizePhoneNumber,
   verifyCustomerOtp,
 } from '@/server/modules/customer-auth/service';
 import { walletRepository } from '@/server/modules/wallet/repository';
@@ -23,8 +32,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Revisa el teléfono y el código.' }, { status: 400 });
   }
 
+  const ipAddress = getRequestIpAddress(request);
+
   try {
-    const result = await verifyCustomerOtp(customerAuthRepository, body.data);
+    const normalizedPhoneNumber = normalizePhoneNumber(body.data.phoneNumber);
+
+    await assertOtpVerifyAllowed(customerAuthRateLimitRepository, {
+      phoneNumber: normalizedPhoneNumber,
+      ipAddress,
+    });
+
+    const result = await verifyCustomerOtp(customerAuthRepository, {
+      ...body.data,
+      phoneNumber: normalizedPhoneNumber,
+    });
+
+    await clearOtpVerifyFailures(customerAuthRateLimitRepository, {
+      phoneNumber: normalizedPhoneNumber,
+      ipAddress,
+    });
+
     const walletSummary = await getWalletSummary(walletRepository, result.customer.id);
     const response = NextResponse.json({
       customer: result.customer,
@@ -35,6 +62,41 @@ export async function POST(request: NextRequest) {
     setCustomerSessionCookie(response, result.sessionToken);
     return response;
   } catch (error) {
+    if (error instanceof CustomerAuthInvalidOtpError || error instanceof CustomerAuthExpiredOtpError) {
+      try {
+        await recordOtpVerifyFailure(customerAuthRateLimitRepository, {
+          phoneNumber: normalizePhoneNumber(body.data.phoneNumber),
+          ipAddress,
+        });
+      } catch (rateLimitError) {
+        if (rateLimitError instanceof CustomerAuthRateLimitError) {
+          return NextResponse.json(
+            { error: rateLimitError.message },
+            {
+              status: 429,
+              headers: {
+                'Retry-After': String(rateLimitError.retryAfterSeconds),
+              },
+            },
+          );
+        }
+
+        throw rateLimitError;
+      }
+    }
+
+    if (error instanceof CustomerAuthRateLimitError) {
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': String(error.retryAfterSeconds),
+          },
+        },
+      );
+    }
+
     if (error instanceof CustomerAuthValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }

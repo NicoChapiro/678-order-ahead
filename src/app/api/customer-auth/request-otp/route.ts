@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { customerAuthRateLimitRepository } from '@/server/modules/customer-auth/rate-limit-repository';
+import {
+  assertOtpRequestAllowed,
+  CustomerAuthRateLimitError,
+  getRequestIpAddress,
+} from '@/server/modules/customer-auth/rate-limit';
 import { customerAuthRepository } from '@/server/modules/customer-auth/repository';
 import { getSmsProvider } from '@/server/modules/customer-auth/sms';
 import {
   CustomerAuthError,
   CustomerAuthValidationError,
+  normalizePhoneNumber,
   requestCustomerOtp,
 } from '@/server/modules/customer-auth/service';
 
@@ -19,13 +26,35 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await requestCustomerOtp(customerAuthRepository, getSmsProvider(), body.data);
+    const normalizedPhoneNumber = normalizePhoneNumber(body.data.phoneNumber);
+
+    await assertOtpRequestAllowed(customerAuthRateLimitRepository, {
+      phoneNumber: normalizedPhoneNumber,
+      ipAddress: getRequestIpAddress(request),
+    });
+
+    const result = await requestCustomerOtp(customerAuthRepository, getSmsProvider(), {
+      phoneNumber: normalizedPhoneNumber,
+    });
+
     return NextResponse.json({
       phoneNumber: result.phoneNumber,
       expiresAt: result.expiresAt,
       message: 'Te enviamos un código por SMS.',
     });
   } catch (error) {
+    if (error instanceof CustomerAuthRateLimitError) {
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': String(error.retryAfterSeconds),
+          },
+        },
+      );
+    }
+
     if (error instanceof CustomerAuthValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }

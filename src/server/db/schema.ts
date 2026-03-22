@@ -194,6 +194,30 @@ export const customerSessions = pgTable(
   }),
 );
 
+export const customerAuthRateLimits = pgTable(
+  'customer_auth_rate_limits',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    action: varchar('action', { length: 64 }).notNull(),
+    scopeKey: varchar('scope_key', { length: 191 }).notNull(),
+    hitCount: integer('hit_count').default(0).notNull(),
+    windowStartedAt: timestamp('window_started_at', { withTimezone: true }).notNull(),
+    blockedUntil: timestamp('blocked_until', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    actionScopeUniqueIdx: uniqueIndex('customer_auth_rate_limits_action_scope_unique_idx').on(
+      table.action,
+      table.scopeKey,
+    ),
+    actionBlockedUntilIdx: index('customer_auth_rate_limits_action_blocked_until_idx').on(
+      table.action,
+      table.blockedUntil,
+    ),
+  }),
+);
+
 export const menuItems = pgTable(
   'menu_items',
   {
