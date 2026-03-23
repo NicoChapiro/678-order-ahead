@@ -262,6 +262,7 @@ export default function AdminHomePage() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [activeSurface, setActiveSurface] = useState<'operations' | 'menu'>('operations');
   const [orderFeedback, setOrderFeedback] = useState<string | null>(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState<OrderStatusFilter>('all');
   const [orderActionPending, setOrderActionPending] = useState<
@@ -368,7 +369,9 @@ export default function AdminHomePage() {
 
     setWalletLoading(true);
     const [summaryResponse, transactionsResponse] = await Promise.all([
-      fetch(`/api/admin/wallets/${encodeURIComponent(normalizedCustomerKey)}`, { cache: 'no-store' }),
+      fetch(`/api/admin/wallets/${encodeURIComponent(normalizedCustomerKey)}`, {
+        cache: 'no-store',
+      }),
       fetch(`/api/admin/wallets/${encodeURIComponent(normalizedCustomerKey)}/transactions`, {
         cache: 'no-store',
       }),
@@ -744,105 +747,541 @@ export default function AdminHomePage() {
   }
 
   function jumpToMenuStock() {
+    setActiveSurface('menu');
     setOrderFeedback(
       'Revisa el menú de la sucursal y marca los ítems afectados como sin stock para prevenir nuevos pedidos rechazables.',
     );
-    jumpToSection('admin-menu');
+    setTimeout(() => jumpToSection('admin-menu'), 0);
   }
 
+  const orderCounts = useMemo(
+    () => ({
+      pending: orders.filter((order) => order.status === 'pending_acceptance').length,
+      accepted: orders.filter((order) => order.status === 'accepted').length,
+      ready: orders.filter((order) => order.status === 'ready_for_pickup').length,
+    }),
+    [orders],
+  );
+
+  const recentAvailabilityHistory = overview?.recentHistory.slice(0, 3) ?? [];
+  const recentWalletTransactions = walletTransactions.slice(0, 4);
+
   return (
-    <AppShell>
-      <PageHeader>
-        <div className="summary-card__title-row">
+    <AppShell className="admin-console-shell">
+      <PageHeader className="admin-console-header">
+        <div className="admin-console-header__row">
           <div className="stack">
             <span className="summary-card__eyebrow">Panel operativo</span>
             <h1>Admin</h1>
             <p>
-              Operación de order-ahead, menú, órdenes y wallet prepaga con una jerarquía visual más
-              clara para caja y backoffice.
+              Consola operacional fullscreen para correr la sucursal, con la cola en el centro y
+              configuración secundaria fuera del flujo principal.
             </p>
           </div>
-          <StatusChip label="Lógica intacta" tone="success" />
+          <div className="admin-console-header__actions">
+            <div className="field summary-card__control admin-console-header__store">
+              <label className="field-label" htmlFor="store-select">
+                Sucursal activa
+              </label>
+              <select
+                id="store-select"
+                value={storeCode}
+                onChange={(event) => setStoreCode(event.target.value as StoreCode)}
+              >
+                <option value="store_1">Store 1</option>
+                <option value="store_2">Store 2</option>
+                <option value="store_3">Store 3</option>
+              </select>
+            </div>
+            <StatusChip label="Lógica intacta" tone="success" />
+          </div>
+        </div>
+        <div className="admin-surface-switch" role="tablist" aria-label="Superficies admin">
+          <button
+            className={`button ${
+              activeSurface === 'operations' ? 'button--primary' : 'button--secondary'
+            } button--touch`}
+            type="button"
+            onClick={() => setActiveSurface('operations')}
+            aria-pressed={activeSurface === 'operations'}
+          >
+            Operación en vivo
+          </button>
+          <button
+            className={`button ${activeSurface === 'menu' ? 'button--primary' : 'button--secondary'} button--touch`}
+            type="button"
+            onClick={() => setActiveSurface('menu')}
+            aria-pressed={activeSurface === 'menu'}
+          >
+            Configuración de menú
+          </button>
         </div>
         <p>
-          Las cargas por caja aceptan owner/barista. Los ajustes admin quedan validados owner-only
-          en backend.
+          Las cargas por caja aceptan owner/barista. Los ajustes admin siguen validados owner-only
+          en backend, sin cambios de reglas.
         </p>
       </PageHeader>
 
-      <SummaryCard>
+      <SummaryCard className="admin-command-bar">
         <div className="summary-card__title-row">
           <div className="stack">
-            <span className="summary-card__eyebrow">Control panel</span>
+            <span className="summary-card__eyebrow">Command bar</span>
             <h2>{overview?.availability.storeName ?? 'Sucursal seleccionada'}</h2>
             <p>
-              Selector de sucursal, estado operativo y órdenes que requieren atención inmediata.
+              Prioridad 1: estado de tienda, cola viva y carga operacional inmediata para una
+              pantalla táctil 16:9.
             </p>
           </div>
-          <div className="field summary-card__control">
-            <label className="field-label" htmlFor="store-select">
-              Sucursal activa
-            </label>
-            <select
-              id="store-select"
-              value={storeCode}
-              onChange={(event) => setStoreCode(event.target.value as StoreCode)}
-            >
-              <option value="store_1">Store 1</option>
-              <option value="store_2">Store 2</option>
-              <option value="store_3">Store 3</option>
-            </select>
+          <div className="admin-command-bar__meta">
+            <StatusChip
+              label={
+                overview?.availability.isOrderAheadEnabled
+                  ? 'Order-ahead activo'
+                  : 'Order-ahead pausado'
+              }
+              tone={overview?.availability.isOrderAheadEnabled ? 'success' : 'danger'}
+            />
+            <StatusChip
+              label={`${actionableOrders} accionables`}
+              tone={actionableOrders > 0 ? 'warning' : 'neutral'}
+            />
           </div>
         </div>
-        <StatGrid>
+        <StatGrid className="admin-command-bar__stats">
           <StatItem
-            label="Order-ahead"
-            value={
-              <StatusChip
-                label={overview?.availability.isOrderAheadEnabled ? 'Activo' : 'Pausado'}
-                tone={overview?.availability.isOrderAheadEnabled ? 'success' : 'danger'}
-              />
-            }
-            helper={
-              overview
-                ? `Actualizado ${formatDateTime(overview.availability.updatedAt)}`
-                : 'Sin datos aún'
-            }
+            label="Pendientes"
+            value={orderCounts.pending}
+            helper="Requieren aceptar o rechazar"
           />
           <StatItem
-            label="Órdenes accionables"
-            value={actionableOrders}
-            helper="Pendientes, aceptadas o listas"
+            label="Aceptadas"
+            value={orderCounts.accepted}
+            helper="En preparación o seguimiento"
           />
+          <StatItem label="Listas" value={orderCounts.ready} helper="Esperando entrega o no-show" />
           <StatItem
-            label="Wallet consultada"
+            label="Wallet activa"
             value={walletSummary ? formatClp(walletSummary.currentBalance) : '—'}
             helper={walletSummary?.wallet.customerIdentifier ?? 'Busca una wallet para operar'}
           />
         </StatGrid>
       </SummaryCard>
 
-      <div className="page-columns">
-        <div className="stack">
+      <div className="admin-console-layout">
+        <div className="admin-console-main">
+          <div id="admin-orders">
+            <SectionCard className="section-card--order-focus">
+              <CardHeader>
+                <div className="stack">
+                  <h2>Cola operativa de órdenes</h2>
+                  <p>
+                    La cola es el centro de la operación: estado, siguiente acción y controles
+                    táctiles amplios primero; detalle y auditoría sólo al expandir.
+                  </p>
+                </div>
+                <div className="admin-orders-toolbar">
+                  <div className="admin-order-pill-row">
+                    <div className="admin-order-pill">
+                      <span className="row-label">Pendientes</span>
+                      <strong>{orderCounts.pending}</strong>
+                    </div>
+                    <div className="admin-order-pill">
+                      <span className="row-label">Aceptadas</span>
+                      <strong>{orderCounts.accepted}</strong>
+                    </div>
+                    <div className="admin-order-pill">
+                      <span className="row-label">Listas</span>
+                      <strong>{orderCounts.ready}</strong>
+                    </div>
+                  </div>
+                  <div className="field card-header__control">
+                    <label className="field-label" htmlFor="order-filter">
+                      Filtro por estado
+                    </label>
+                    <select
+                      id="order-filter"
+                      value={orderStatusFilter}
+                      onChange={(event) =>
+                        setOrderStatusFilter(event.target.value as OrderStatusFilter)
+                      }
+                    >
+                      <option value="all">Todas</option>
+                      <option value="pending_acceptance">Pendientes</option>
+                      <option value="accepted">Aceptadas</option>
+                      <option value="rejected">Rechazadas</option>
+                      <option value="cancelled_by_customer">Canceladas</option>
+                      <option value="ready_for_pickup">Listas</option>
+                      <option value="completed">Completadas</option>
+                      <option value="no_show">No-show</option>
+                    </select>
+                  </div>
+                </div>
+              </CardHeader>
+              {ordersError ? <InlineFeedback tone="error" message={ordersError} /> : null}
+              {orderFeedback ? <InlineFeedback tone="success" message={orderFeedback} /> : null}
+              {storeWideIssuePromptVisible ? (
+                <InlineFeedback
+                  tone="warning"
+                  message={`Order-ahead sigue activo y ya hay ${recentRejectedOrders} rechazos recientes en esta vista. Si la causa es general, pausa la sucursal antes de seguir rechazando pedidos.`}
+                />
+              ) : null}
+              {ordersLoading ? (
+                <LoadingBlock label="Cargando órdenes de la sucursal…" />
+              ) : orders.length === 0 ? (
+                <EmptyState
+                  title="No hay órdenes para esta vista"
+                  description="Prueba otro filtro o espera nuevas compras para ver actividad aquí."
+                />
+              ) : (
+                <div className="admin-order-queue">
+                  {orders.map((order) => {
+                    const pendingAction = orderActionPending[order.id];
+                    const latestNotification = order.notifications[0] ?? null;
+                    const noShowReason =
+                      order.status === 'no_show'
+                        ? typeof order.lastEvent?.metadataJson?.reason === 'string'
+                          ? order.lastEvent.metadataJson.reason
+                          : null
+                        : null;
+                    const preventionMessages = getPendingAcceptancePreventionMessages({
+                      isOrderAheadEnabled: overview?.availability.isOrderAheadEnabled === true,
+                      repeatedRecentRejects: recentRejectedOrders,
+                    });
+
+                    return (
+                      <article key={order.id} className="order-card order-card--console">
+                        <div className="order-card__header">
+                          <div className="stack order-card__headline">
+                            <div className="chip-row">
+                              <StatusChip
+                                label={getAdminOrderStatusLabel(order.status)}
+                                tone={getStatusTone(order.status)}
+                              />
+                              <StatusChip label={order.storeName} tone="muted" />
+                            </div>
+                            <div className="order-card__title-row">
+                              <strong>{order.customerIdentifier}</strong>
+                              <span className="meta-text">Orden {order.id}</span>
+                            </div>
+                            <span className="field-help">{getNextActionHint(order.status)}</span>
+                          </div>
+                          <div className="order-card__summary">
+                            <strong>{formatClp(order.totalAmount)}</strong>
+                            <span className="meta-text">{formatDateTime(order.placedAt)}</span>
+                          </div>
+                        </div>
+
+                        <div className="order-card__console-grid">
+                          <div className="order-card__primary">
+                            <div className="order-items order-items--compact">
+                              {order.items.map((item) => (
+                                <div key={item.id} className="order-item-row">
+                                  <span>{item.itemNameSnapshot}</span>
+                                  <strong>x{item.quantity}</strong>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="order-card__metrics order-card__metrics--compact">
+                              <div className="meta-block">
+                                <span className="row-label">Aceptada</span>
+                                <strong>
+                                  {order.acceptedAt ? formatDateTime(order.acceptedAt) : '—'}
+                                </strong>
+                              </div>
+                              <div className="meta-block">
+                                <span className="row-label">Lista</span>
+                                <strong>
+                                  {order.readyAt ? formatDateTime(order.readyAt) : '—'}
+                                </strong>
+                              </div>
+                              <div className="meta-block">
+                                <span className="row-label">Completada</span>
+                                <strong>
+                                  {order.completedAt ? formatDateTime(order.completedAt) : '—'}
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="order-card__actions">
+                            {order.status === 'pending_acceptance' ? (
+                              <div className="stack compact-card">
+                                <div className="surface-soft stack order-prevention-panel order-prevention-panel--compact">
+                                  <div className="toolbar">
+                                    <div className="stack">
+                                      <span className="kicker">Antes de rechazar</span>
+                                      <strong>Prevén la excepción antes de documentarla.</strong>
+                                    </div>
+                                    <button
+                                      className="button button--primary button--touch"
+                                      type="button"
+                                      onClick={() => onOrderAction(order.id, 'accept')}
+                                      disabled={Boolean(pendingAction)}
+                                    >
+                                      {pendingAction === 'accept' ? 'Aceptando…' : 'Aceptar orden'}
+                                    </button>
+                                  </div>
+                                  <ul className="admin-guidance-list admin-guidance-list--compact">
+                                    {preventionMessages.map((message) => (
+                                      <li key={`${order.id}-${message}`}>{message}</li>
+                                    ))}
+                                  </ul>
+                                  <div className="inline-actions inline-actions--tight">
+                                    <button
+                                      className="button button--secondary button--touch"
+                                      type="button"
+                                      onClick={() =>
+                                        prefillPause(
+                                          'inventory_issue',
+                                          `Pausa preventiva iniciada desde orden ${order.id} por rechazo repetido o causa transversal.`,
+                                        )
+                                      }
+                                      disabled={Boolean(pendingAction)}
+                                    >
+                                      Pausar order-ahead
+                                    </button>
+                                    <button
+                                      className="button button--ghost button--touch"
+                                      type="button"
+                                      onClick={jumpToMenuStock}
+                                      disabled={Boolean(pendingAction)}
+                                    >
+                                      Revisar stock
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="form-grid form-row--inline compact-card order-exception-row">
+                                  <label className="field">
+                                    <span className="field-label">
+                                      Motivo obligatorio de rechazo
+                                    </span>
+                                    <input
+                                      placeholder="Documenta por qué esta orden sí requiere excepción"
+                                      value={rejectReasons[order.id] ?? ''}
+                                      onChange={(event) =>
+                                        setRejectReasons((current) => ({
+                                          ...current,
+                                          [order.id]: event.target.value,
+                                        }))
+                                      }
+                                      disabled={Boolean(pendingAction)}
+                                    />
+                                  </label>
+                                  <button
+                                    className="button button--ghost button--touch order-exception-button"
+                                    type="button"
+                                    onClick={() => onRejectOrder(order.id)}
+                                    disabled={Boolean(pendingAction)}
+                                  >
+                                    {pendingAction === 'reject'
+                                      ? 'Rechazando…'
+                                      : 'Rechazar como excepción'}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {order.status === 'accepted' ? (
+                              <div className="form-grid form-row--inline compact-card">
+                                <button
+                                  className="button button--primary button--touch"
+                                  type="button"
+                                  onClick={() => onOrderAction(order.id, 'ready')}
+                                  disabled={Boolean(pendingAction)}
+                                >
+                                  {pendingAction === 'ready' ? 'Actualizando…' : 'Marcar lista'}
+                                </button>
+                                <label className="field">
+                                  <span className="field-label">Nota de no-show</span>
+                                  <input
+                                    placeholder="Registra contexto si no retira"
+                                    value={noShowReasons[order.id] ?? ''}
+                                    onChange={(event) =>
+                                      setNoShowReasons((current) => ({
+                                        ...current,
+                                        [order.id]: event.target.value,
+                                      }))
+                                    }
+                                    disabled={Boolean(pendingAction)}
+                                  />
+                                </label>
+                                <button
+                                  className="button button--soft-danger button--touch"
+                                  type="button"
+                                  onClick={() => onNoShowOrder(order.id)}
+                                  disabled={Boolean(pendingAction)}
+                                >
+                                  {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
+                                </button>
+                              </div>
+                            ) : null}
+
+                            {order.status === 'ready_for_pickup' ? (
+                              <div className="form-grid form-row--inline compact-card">
+                                <button
+                                  className="button button--primary button--touch"
+                                  type="button"
+                                  onClick={() => onOrderAction(order.id, 'complete')}
+                                  disabled={Boolean(pendingAction)}
+                                >
+                                  {pendingAction === 'complete'
+                                    ? 'Completando…'
+                                    : 'Completar entrega'}
+                                </button>
+                                <label className="field">
+                                  <span className="field-label">Nota de no-show</span>
+                                  <input
+                                    placeholder="Usa esta nota si el cliente no se presenta"
+                                    value={noShowReasons[order.id] ?? ''}
+                                    onChange={(event) =>
+                                      setNoShowReasons((current) => ({
+                                        ...current,
+                                        [order.id]: event.target.value,
+                                      }))
+                                    }
+                                    disabled={Boolean(pendingAction)}
+                                  />
+                                </label>
+                                <button
+                                  className="button button--soft-danger button--touch"
+                                  type="button"
+                                  onClick={() => onNoShowOrder(order.id)}
+                                  disabled={Boolean(pendingAction)}
+                                >
+                                  {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <details className="order-card__details">
+                          <summary>Ver detalle operativo y auditoría</summary>
+                          <div className="stack">
+                            {order.lastEvent ? (
+                              <div className="meta-text">
+                                Último evento: {order.lastEvent.eventType} ·{' '}
+                                {formatDateTime(order.lastEvent.createdAt)}
+                                {order.lastEvent.actorRole ? ` · ${order.lastEvent.actorRole}` : ''}
+                              </div>
+                            ) : null}
+                            {order.rejectionReason ? (
+                              <InlineFeedback
+                                tone="warning"
+                                message={`Motivo rechazo: ${order.rejectionReason}`}
+                              />
+                            ) : null}
+                            {order.cancellationReason ? (
+                              <InlineFeedback
+                                tone="warning"
+                                message={`Motivo cancelación: ${order.cancellationReason}`}
+                              />
+                            ) : null}
+                            {noShowReason ? (
+                              <InlineFeedback
+                                tone="warning"
+                                message={`Nota no-show: ${noShowReason}`}
+                              />
+                            ) : null}
+                            {latestNotification ? (
+                              <div className="surface-soft stack">
+                                <div className="toolbar">
+                                  <div className="stack">
+                                    <span className="row-label">Última notificación</span>
+                                    <div className="chip-row">
+                                      <StatusChip
+                                        label={getAdminNotificationTypeLabel(
+                                          latestNotification.notificationType,
+                                        )}
+                                        tone="muted"
+                                      />
+                                      <StatusChip
+                                        label={getAdminNotificationStatusLabel(
+                                          latestNotification.status,
+                                        )}
+                                        tone={getNotificationStatusTone(latestNotification.status)}
+                                      />
+                                      <StatusChip
+                                        label={`Intentos ${latestNotification.attemptCount}`}
+                                        tone="muted"
+                                      />
+                                    </div>
+                                  </div>
+                                  {latestNotification.status === 'failed' ? (
+                                    <button
+                                      className="button button--secondary button--touch"
+                                      type="button"
+                                      onClick={() =>
+                                        onRetryNotification(order.id, latestNotification.id)
+                                      }
+                                      disabled={
+                                        orderActionPending[latestNotification.id] ===
+                                        'retry-notification'
+                                      }
+                                    >
+                                      {orderActionPending[latestNotification.id] ===
+                                      'retry-notification'
+                                        ? 'Reintentando…'
+                                        : 'Reintentar notificación'}
+                                    </button>
+                                  ) : null}
+                                </div>
+                                <div className="order-card__metrics order-card__metrics--compact">
+                                  <div className="meta-block">
+                                    <span className="row-label">Creada</span>
+                                    <strong>{formatDateTime(latestNotification.createdAt)}</strong>
+                                  </div>
+                                  <div className="meta-block">
+                                    <span className="row-label">Actualizada</span>
+                                    <strong>{formatDateTime(latestNotification.updatedAt)}</strong>
+                                  </div>
+                                  <div className="meta-block">
+                                    <span className="row-label">Canal</span>
+                                    <strong>{latestNotification.channel}</strong>
+                                  </div>
+                                </div>
+                                {latestNotification.failureReason ? (
+                                  <InlineFeedback
+                                    tone="error"
+                                    message={`Último error: ${latestNotification.failureReason}`}
+                                  />
+                                ) : null}
+                              </div>
+                            ) : (
+                              <InlineFeedback
+                                tone="info"
+                                message="Esta orden aún no generó una notificación operacional interna."
+                              />
+                            )}
+                          </div>
+                        </details>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </SectionCard>
+          </div>
+        </div>
+
+        <aside className="admin-console-rail">
           <div id="admin-order-ahead">
-            <SectionCard>
+            <SectionCard className="section-card--compact">
               <CardHeader>
                 <div className="stack">
                   <h2>Order-ahead</h2>
-                  <p>
-                    Haz visible el estado actual, previene errores y deja evidencia del motivo
-                    cuando pausas la tienda.
-                  </p>
+                  <p>Control visible de tienda con estado actual y bitácora breve.</p>
                 </div>
               </CardHeader>
               {error ? <InlineFeedback tone="error" message={error} /> : null}
               {overviewLoading ? (
-                <LoadingBlock label="Cargando disponibilidad y bitácora…" />
+                <LoadingBlock label="Cargando disponibilidad…" />
               ) : overview ? (
                 <>
                   <div className="surface-soft stack">
                     <div className="toolbar">
-                      <div className="stack" style={{ gap: '0.35rem' }}>
+                      <div className="stack">
                         <span className="kicker">Estado actual</span>
                         <div className="chip-row">
                           <StatusChip
@@ -863,7 +1302,7 @@ export default function AdminHomePage() {
                         </div>
                       </div>
                       <div className="meta-block">
-                        <span className="row-label">Última actualización</span>
+                        <span className="row-label">Actualizado</span>
                         <strong>{formatDateTime(overview.availability.updatedAt)}</strong>
                       </div>
                     </div>
@@ -884,8 +1323,7 @@ export default function AdminHomePage() {
                       <div className="stack" style={{ gap: '0.2rem' }}>
                         <strong>Habilitar order-ahead</strong>
                         <span className="field-help">
-                          Si se desactiva, el motivo y comentario quedan visibles para dar contexto
-                          operativo.
+                          Mantén visible el estado de tienda para todo el equipo.
                         </span>
                       </div>
                     </label>
@@ -916,31 +1354,34 @@ export default function AdminHomePage() {
                       </div>
                     ) : null}
 
-                    <div className="inline-actions">
-                      <button
-                        className="button button--primary"
-                        type="submit"
-                        disabled={overviewSaving}
-                      >
-                        {overviewSaving ? 'Guardando…' : 'Guardar estado operativo'}
-                      </button>
-                      <span className="field-help">
-                        Evita cambios accidentales revisando motivo y comentario antes de pausar.
-                      </span>
-                    </div>
+                    <button
+                      className="button button--primary button--block button--touch"
+                      type="submit"
+                      disabled={overviewSaving}
+                    >
+                      {overviewSaving ? 'Guardando…' : 'Guardar estado operativo'}
+                    </button>
                   </form>
 
-                  <div className="stack">
-                    <h3>Historial reciente</h3>
-                    {overview.recentHistory.length === 0 ? (
+                  <div className="stack compact-list">
+                    <div className="toolbar">
+                      <h3>Historial reciente</h3>
+                      {overview.recentHistory.length > recentAvailabilityHistory.length ? (
+                        <span className="meta-text">
+                          Mostrando {recentAvailabilityHistory.length} de{' '}
+                          {overview.recentHistory.length}
+                        </span>
+                      ) : null}
+                    </div>
+                    {recentAvailabilityHistory.length === 0 ? (
                       <EmptyState
                         title="Sin cambios recientes"
-                        description="Cuando la disponibilidad cambie, el historial mostrará actor, estado y fecha para auditoría rápida."
+                        description="Cuando la disponibilidad cambie, el historial mostrará actor, estado y fecha."
                       />
                     ) : (
-                      <div className="list-grid">
-                        {overview.recentHistory.map((event) => (
-                          <div key={event.id} className="transaction-row">
+                      <div className="list-grid compact-list">
+                        {recentAvailabilityHistory.map((event) => (
+                          <div key={event.id} className="transaction-row compact-card">
                             <div className="stack" style={{ gap: '0.35rem' }}>
                               <div className="chip-row">
                                 <StatusChip
@@ -954,7 +1395,7 @@ export default function AdminHomePage() {
                               <strong>{formatDateTime(event.changedAt)}</strong>
                               <span className="meta-text">{event.changedByRole}</span>
                             </div>
-                            <div className="stack" style={{ gap: '0.35rem', maxWidth: 360 }}>
+                            <div className="stack" style={{ gap: '0.35rem', maxWidth: 260 }}>
                               <span className="row-label">Comentario</span>
                               <span>{event.comment || 'Sin comentario adicional.'}</span>
                             </div>
@@ -973,594 +1414,11 @@ export default function AdminHomePage() {
             </SectionCard>
           </div>
 
-          <SectionCard>
-            <CardHeader>
-              <div className="stack">
-                <h2>Órdenes de la sucursal</h2>
-                <p>
-                  Cada orden destaca estado actual, siguiente acción válida, montos y evidencias del
-                  flujo.
-                </p>
-              </div>
-              <div className="field card-header__control">
-                <label className="field-label" htmlFor="order-filter">
-                  Filtro por estado
-                </label>
-                <select
-                  id="order-filter"
-                  value={orderStatusFilter}
-                  onChange={(event) =>
-                    setOrderStatusFilter(event.target.value as OrderStatusFilter)
-                  }
-                >
-                  <option value="all">Todas</option>
-                  <option value="pending_acceptance">Pendientes</option>
-                  <option value="accepted">Aceptadas</option>
-                  <option value="rejected">Rechazadas</option>
-                  <option value="cancelled_by_customer">Canceladas</option>
-                  <option value="ready_for_pickup">Listas</option>
-                  <option value="completed">Completadas</option>
-                  <option value="no_show">No-show</option>
-                </select>
-              </div>
-            </CardHeader>
-            {ordersError ? <InlineFeedback tone="error" message={ordersError} /> : null}
-            {orderFeedback ? <InlineFeedback tone="success" message={orderFeedback} /> : null}
-            {storeWideIssuePromptVisible ? (
-              <InlineFeedback
-                tone="warning"
-                message={`Order-ahead sigue activo y ya hay ${recentRejectedOrders} rechazos recientes en esta vista. Si la causa es general, pausa la sucursal antes de seguir rechazando pedidos.`}
-              />
-            ) : null}
-            {ordersLoading ? (
-              <LoadingBlock label="Cargando órdenes de la sucursal…" />
-            ) : orders.length === 0 ? (
-              <EmptyState
-                title="No hay órdenes para esta vista"
-                description="Prueba otro filtro o espera nuevas compras para ver actividad aquí."
-              />
-            ) : (
-              <div className="list-grid">
-                {orders.map((order) => {
-                  const pendingAction = orderActionPending[order.id];
-                  const latestNotification = order.notifications[0] ?? null;
-                  const noShowReason =
-                    order.status === 'no_show'
-                      ? typeof order.lastEvent?.metadataJson?.reason === 'string'
-                        ? order.lastEvent.metadataJson.reason
-                        : null
-                      : null;
-                  const preventionMessages = getPendingAcceptancePreventionMessages({
-                    isOrderAheadEnabled: overview?.availability.isOrderAheadEnabled === true,
-                    repeatedRecentRejects: recentRejectedOrders,
-                  });
-
-                  return (
-                    <article key={order.id} className="order-card compact-card">
-                      <div className="order-card__header">
-                        <div className="stack" style={{ gap: '0.4rem' }}>
-                          <div className="chip-row">
-                            <StatusChip
-                              label={getAdminOrderStatusLabel(order.status)}
-                              tone={getStatusTone(order.status)}
-                            />
-                            <StatusChip label={order.storeName} tone="muted" />
-                          </div>
-                          <strong>{formatClp(order.totalAmount)}</strong>
-                          <span className="meta-text">Orden {order.id}</span>
-                        </div>
-                        <div className="stack" style={{ gap: '0.3rem', maxWidth: 320 }}>
-                          <span className="row-label">Cliente</span>
-                          <strong>{order.customerIdentifier}</strong>
-                          <span className="field-help">{getNextActionHint(order.status)}</span>
-                        </div>
-                      </div>
-
-                      <div className="order-card__metrics">
-                        <div className="meta-block">
-                          <span className="row-label">Creada</span>
-                          <strong>{formatDateTime(order.placedAt)}</strong>
-                        </div>
-                        <div className="meta-block">
-                          <span className="row-label">Aceptada</span>
-                          <strong>
-                            {order.acceptedAt ? formatDateTime(order.acceptedAt) : '—'}
-                          </strong>
-                        </div>
-                        <div className="meta-block">
-                          <span className="row-label">Lista</span>
-                          <strong>{order.readyAt ? formatDateTime(order.readyAt) : '—'}</strong>
-                        </div>
-                        <div className="meta-block">
-                          <span className="row-label">Completada</span>
-                          <strong>
-                            {order.completedAt ? formatDateTime(order.completedAt) : '—'}
-                          </strong>
-                        </div>
-                      </div>
-
-                      <div className="surface-soft stack">
-                        <div className="order-items">
-                          {order.items.map((item) => (
-                            <div key={item.id} className="order-item-row">
-                              <span>{item.itemNameSnapshot}</span>
-                              <strong>x{item.quantity}</strong>
-                            </div>
-                          ))}
-                        </div>
-                        {order.lastEvent ? (
-                          <div className="meta-text">
-                            Último evento: {order.lastEvent.eventType} ·{' '}
-                            {formatDateTime(order.lastEvent.createdAt)}
-                            {order.lastEvent.actorRole ? ` · ${order.lastEvent.actorRole}` : ''}
-                          </div>
-                        ) : null}
-                        {order.rejectionReason ? (
-                          <InlineFeedback
-                            tone="warning"
-                            message={`Motivo rechazo: ${order.rejectionReason}`}
-                          />
-                        ) : null}
-                        {order.cancellationReason ? (
-                          <InlineFeedback
-                            tone="warning"
-                            message={`Motivo cancelación: ${order.cancellationReason}`}
-                          />
-                        ) : null}
-                        {noShowReason ? (
-                          <InlineFeedback
-                            tone="warning"
-                            message={`Nota no-show: ${noShowReason}`}
-                          />
-                        ) : null}
-                        {latestNotification ? (
-                          <div className="surface-soft stack" style={{ gap: '0.6rem' }}>
-                            <div className="toolbar">
-                              <div className="stack" style={{ gap: '0.25rem' }}>
-                                <span className="row-label">
-                                  Última consecuencia de notificación
-                                </span>
-                                <div className="chip-row">
-                                  <StatusChip
-                                    label={getAdminNotificationTypeLabel(
-                                      latestNotification.notificationType,
-                                    )}
-                                    tone="muted"
-                                  />
-                                  <StatusChip
-                                    label={getAdminNotificationStatusLabel(
-                                      latestNotification.status,
-                                    )}
-                                    tone={getNotificationStatusTone(latestNotification.status)}
-                                  />
-                                  <StatusChip
-                                    label={`Intentos ${latestNotification.attemptCount}`}
-                                    tone="muted"
-                                  />
-                                </div>
-                              </div>
-                              {latestNotification.status === 'failed' ? (
-                                <button
-                                  className="button button--secondary"
-                                  type="button"
-                                  onClick={() =>
-                                    onRetryNotification(order.id, latestNotification.id)
-                                  }
-                                  disabled={
-                                    orderActionPending[latestNotification.id] ===
-                                    'retry-notification'
-                                  }
-                                >
-                                  {orderActionPending[latestNotification.id] ===
-                                  'retry-notification'
-                                    ? 'Reintentando…'
-                                    : 'Reintentar notificación'}
-                                </button>
-                              ) : null}
-                            </div>
-                            <div className="order-card__metrics">
-                              <div className="meta-block">
-                                <span className="row-label">Creada</span>
-                                <strong>{formatDateTime(latestNotification.createdAt)}</strong>
-                              </div>
-                              <div className="meta-block">
-                                <span className="row-label">Última actualización</span>
-                                <strong>{formatDateTime(latestNotification.updatedAt)}</strong>
-                              </div>
-                              <div className="meta-block">
-                                <span className="row-label">Canal</span>
-                                <strong>{latestNotification.channel}</strong>
-                              </div>
-                            </div>
-                            {latestNotification.failureReason ? (
-                              <InlineFeedback
-                                tone="error"
-                                message={`Último error: ${latestNotification.failureReason}`}
-                              />
-                            ) : null}
-                          </div>
-                        ) : (
-                          <InlineFeedback
-                            tone="info"
-                            message="Esta orden aún no generó una notificación operacional interna."
-                          />
-                        )}
-                      </div>
-
-                      <div className="stack">
-                        {order.status === 'pending_acceptance' ? (
-                          <div className="stack compact-card">
-                            <div className="surface-soft stack order-prevention-panel">
-                              <div className="toolbar">
-                                <div className="stack" style={{ gap: '0.3rem' }}>
-                                  <span className="kicker">Antes de rechazar</span>
-                                  <strong>
-                                    El rechazo debe ser la excepción, no la ruta normal.
-                                  </strong>
-                                  <span className="field-help">
-                                    Elige primero la acción al nivel correcto para evitar rechazos
-                                    prevenibles.
-                                  </span>
-                                </div>
-                                <button
-                                  className="button button--primary"
-                                  type="button"
-                                  onClick={() => onOrderAction(order.id, 'accept')}
-                                  disabled={Boolean(pendingAction)}
-                                >
-                                  {pendingAction === 'accept' ? 'Aceptando…' : 'Aceptar orden'}
-                                </button>
-                              </div>
-                              <ul className="admin-guidance-list">
-                                {preventionMessages.map((message) => (
-                                  <li key={`${order.id}-${message}`}>{message}</li>
-                                ))}
-                              </ul>
-                              <div className="inline-actions inline-actions--tight">
-                                <button
-                                  className="button button--secondary"
-                                  type="button"
-                                  onClick={() =>
-                                    prefillPause(
-                                      'inventory_issue',
-                                      `Pausa preventiva iniciada desde orden ${order.id} por rechazo repetido o causa transversal.`,
-                                    )
-                                  }
-                                  disabled={Boolean(pendingAction)}
-                                >
-                                  Pausar order-ahead
-                                </button>
-                                <button
-                                  className="button button--ghost"
-                                  type="button"
-                                  onClick={jumpToMenuStock}
-                                  disabled={Boolean(pendingAction)}
-                                >
-                                  Revisar stock del menú
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="form-grid form-row--inline compact-card order-exception-row">
-                              <label className="field">
-                                <span className="field-label">Motivo obligatorio de rechazo</span>
-                                <input
-                                  placeholder="Documenta por qué esta orden sí requiere excepción"
-                                  value={rejectReasons[order.id] ?? ''}
-                                  onChange={(event) =>
-                                    setRejectReasons((current) => ({
-                                      ...current,
-                                      [order.id]: event.target.value,
-                                    }))
-                                  }
-                                  disabled={Boolean(pendingAction)}
-                                />
-                                <span className="field-help">
-                                  Usa rechazo sólo cuando no alcance con aceptar, pausar order-ahead
-                                  o ajustar stock.
-                                </span>
-                              </label>
-                              <button
-                                className="button button--ghost order-exception-button"
-                                type="button"
-                                onClick={() => onRejectOrder(order.id)}
-                                disabled={Boolean(pendingAction)}
-                              >
-                                {pendingAction === 'reject'
-                                  ? 'Rechazando…'
-                                  : 'Rechazar como excepción'}
-                              </button>
-                            </div>
-                          </div>
-                        ) : null}
-
-                        {order.status === 'accepted' ? (
-                          <div className="form-grid form-row--inline compact-card">
-                            <button
-                              className="button button--primary"
-                              type="button"
-                              onClick={() => onOrderAction(order.id, 'ready')}
-                              disabled={Boolean(pendingAction)}
-                            >
-                              {pendingAction === 'ready' ? 'Actualizando…' : 'Marcar lista'}
-                            </button>
-                            <label className="field">
-                              <span className="field-label">Nota de no-show</span>
-                              <input
-                                placeholder="Registra contexto si no retira"
-                                value={noShowReasons[order.id] ?? ''}
-                                onChange={(event) =>
-                                  setNoShowReasons((current) => ({
-                                    ...current,
-                                    [order.id]: event.target.value,
-                                  }))
-                                }
-                                disabled={Boolean(pendingAction)}
-                              />
-                            </label>
-                            <button
-                              className="button button--soft-danger"
-                              type="button"
-                              onClick={() => onNoShowOrder(order.id)}
-                              disabled={Boolean(pendingAction)}
-                            >
-                              {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
-                            </button>
-                          </div>
-                        ) : null}
-
-                        {order.status === 'ready_for_pickup' ? (
-                          <div className="form-grid form-row--inline compact-card">
-                            <button
-                              className="button button--primary"
-                              type="button"
-                              onClick={() => onOrderAction(order.id, 'complete')}
-                              disabled={Boolean(pendingAction)}
-                            >
-                              {pendingAction === 'complete' ? 'Completando…' : 'Completar entrega'}
-                            </button>
-                            <label className="field">
-                              <span className="field-label">Nota de no-show</span>
-                              <input
-                                placeholder="Usa esta nota si el cliente no se presenta"
-                                value={noShowReasons[order.id] ?? ''}
-                                onChange={(event) =>
-                                  setNoShowReasons((current) => ({
-                                    ...current,
-                                    [order.id]: event.target.value,
-                                  }))
-                                }
-                                disabled={Boolean(pendingAction)}
-                              />
-                            </label>
-                            <button
-                              className="button button--soft-danger"
-                              type="button"
-                              onClick={() => onNoShowOrder(order.id)}
-                              disabled={Boolean(pendingAction)}
-                            >
-                              {pendingAction === 'no-show' ? 'Registrando…' : 'Marcar no-show'}
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </SectionCard>
-
-          <div id="admin-menu">
-            <SectionCard>
-              <CardHeader>
-                <div className="stack">
-                  <h2>Menú</h2>
-                  <p>
-                    Configura productos con bloques más claros para creación, attach y visibilidad
-                    por sucursal.
-                  </p>
-                </div>
-              </CardHeader>
-              {menuError ? <InlineFeedback tone="error" message={menuError} /> : null}
-              {menuLoading ? (
-                <LoadingBlock label="Cargando configuración del menú…" />
-              ) : (
-                <>
-                  <div className="stack compact-list">
-                    <InlineFeedback
-                      tone="info"
-                      message="Flujo único del menú: primero crea el producto base, luego adjúntalo a la sucursal activa y finalmente revisa la configuración visible."
-                    />
-                    <div className="menu-config-grid">
-                      <form
-                        onSubmit={onCreateBaseItem}
-                        className="section-card compact-card"
-                        style={{ padding: '1.1rem' }}
-                      >
-                        <div className="stack">
-                          <h3>Crear producto base</h3>
-                          <p className="helper-text">
-                            Define el producto reusable una sola vez antes de asignarlo a
-                            sucursales.
-                          </p>
-                        </div>
-                        <label className="field">
-                          <span className="field-label">Code</span>
-                          <input
-                            value={createCode}
-                            onChange={(event) => setCreateCode(event.target.value)}
-                            placeholder="latte_12oz"
-                          />
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Nombre</span>
-                          <input
-                            value={createName}
-                            onChange={(event) => setCreateName(event.target.value)}
-                            placeholder="Latte"
-                          />
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Descripción</span>
-                          <textarea
-                            value={createDescription}
-                            onChange={(event) => setCreateDescription(event.target.value)}
-                            placeholder="Notas breves para equipo y cliente"
-                          />
-                        </label>
-                        <button
-                          className="button button--primary"
-                          type="submit"
-                          disabled={menuActionLoading === 'create'}
-                        >
-                          {menuActionLoading === 'create' ? 'Creando…' : 'Crear producto'}
-                        </button>
-                      </form>
-
-                      <form
-                        onSubmit={onAttachItem}
-                        className="section-card compact-card"
-                        style={{ padding: '1.1rem' }}
-                      >
-                        <div className="stack">
-                          <h3>Adjuntar a sucursal</h3>
-                          <p className="helper-text">
-                            Convierte un producto base en una opción vendible dentro de la tienda
-                            activa.
-                          </p>
-                        </div>
-                        <label className="field">
-                          <span className="field-label">Producto base</span>
-                          <select
-                            value={attachMenuItemId}
-                            onChange={(event) => setAttachMenuItemId(event.target.value)}
-                          >
-                            {menuOverview?.availableBaseItems.map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {item.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Precio CLP</span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={attachPriceAmount}
-                            onChange={(event) => setAttachPriceAmount(event.target.value)}
-                          />
-                        </label>
-                        <button
-                          className="button button--primary"
-                          type="submit"
-                          disabled={menuActionLoading === 'attach'}
-                        >
-                          {menuActionLoading === 'attach' ? 'Adjuntando…' : 'Adjuntar producto'}
-                        </button>
-                      </form>
-                    </div>
-                  </div>
-
-                  <div className="stack compact-list">
-                    <h3>Configuración actual</h3>
-                    {menuOverview?.configuredItems.length ? (
-                      <div className="list-grid compact-list">
-                        {menuOverview.configuredItems.map((item) => {
-                          const pending = menuActionLoading === item.menuItemId;
-                          return (
-                            <article
-                              key={item.storeMenuItemId}
-                              className="menu-item-card compact-card"
-                            >
-                              <div className="menu-item-card__header">
-                                <div className="stack" style={{ gap: '0.35rem' }}>
-                                  <strong>{item.name}</strong>
-                                  <span className="meta-text">{item.code}</span>
-                                  {item.description ? (
-                                    <span className="meta-text">{item.description}</span>
-                                  ) : null}
-                                </div>
-                                <div
-                                  className="stack"
-                                  style={{ gap: '0.35rem', alignItems: 'flex-end' }}
-                                >
-                                  <strong>{formatClp(item.priceAmount)}</strong>
-                                  <div className="chip-row">
-                                    <StatusChip
-                                      label={item.isVisible ? 'Activo' : 'Oculto'}
-                                      tone={item.isVisible ? 'success' : 'muted'}
-                                    />
-                                    <StatusChip
-                                      label={item.isInStock ? 'En stock' : 'Sin stock'}
-                                      tone={item.isInStock ? 'info' : 'warning'}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="inline-actions inline-actions--tight">
-                                <button
-                                  className="button button--secondary"
-                                  type="button"
-                                  onClick={() =>
-                                    onUpdateStoreItem(item.menuItemId, {
-                                      priceAmount: item.priceAmount,
-                                      isVisible: !item.isVisible,
-                                      isInStock: item.isInStock,
-                                      sortOrder: item.sortOrder,
-                                    })
-                                  }
-                                  disabled={pending}
-                                >
-                                  {pending
-                                    ? 'Actualizando…'
-                                    : item.isVisible
-                                      ? 'Ocultar producto'
-                                      : 'Mostrar producto'}
-                                </button>
-                                <button
-                                  className="button button--ghost"
-                                  type="button"
-                                  onClick={() =>
-                                    onUpdateStoreItem(item.menuItemId, {
-                                      priceAmount: item.priceAmount,
-                                      isVisible: item.isVisible,
-                                      isInStock: !item.isInStock,
-                                      sortOrder: item.sortOrder,
-                                    })
-                                  }
-                                  disabled={pending}
-                                >
-                                  {item.isInStock ? 'Marcar sin stock' : 'Marcar con stock'}
-                                </button>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <EmptyState
-                        title="Sin productos configurados"
-                        description="Primero crea o adjunta un producto para que esta sucursal pueda venderlo."
-                      />
-                    )}
-                  </div>
-                </>
-              )}
-            </SectionCard>
-          </div>
-        </div>
-
-        <div className="stack">
-          <SectionCard>
+          <SectionCard className="section-card--compact">
             <CardHeader>
               <div className="stack">
                 <h2>Wallet prepaga</h2>
-                <p>
-                  Cash top-up y ajustes con lenguaje compartido, mejor separación y estados
-                  visibles.
-                </p>
+                <p>Rail de operación para lookup, saldo y acciones de caja.</p>
               </div>
             </CardHeader>
             <div className="surface-soft stack">
@@ -1578,7 +1436,7 @@ export default function AdminHomePage() {
                   />
                 </label>
                 <button
-                  className="button button--primary"
+                  className="button button--primary button--touch"
                   type="submit"
                   disabled={walletLookupPending}
                 >
@@ -1600,7 +1458,7 @@ export default function AdminHomePage() {
                   <StatItem label="Moneda" value={walletSummary.wallet.currencyCode} />
                 </StatGrid>
 
-                <div className="wallet-layout">
+                <div className="wallet-layout wallet-layout--rail">
                   <div className="section-card compact-card" style={{ padding: '1rem' }}>
                     <div className="stack">
                       <h3>Top-up por caja</h3>
@@ -1608,7 +1466,7 @@ export default function AdminHomePage() {
                         Acción primaria para una carga inmediata validada por backend según rol.
                       </p>
                     </div>
-                    <form onSubmit={onCashTopup} className="form-grid form-grid--two compact-card">
+                    <form onSubmit={onCashTopup} className="form-grid compact-card">
                       <label className="field">
                         <span className="field-label">Monto</span>
                         <input
@@ -1627,7 +1485,7 @@ export default function AdminHomePage() {
                         />
                       </label>
                       <button
-                        className="button button--primary button--block"
+                        className="button button--primary button--block button--touch"
                         type="submit"
                         disabled={cashTopupPending}
                       >
@@ -1643,7 +1501,7 @@ export default function AdminHomePage() {
                         Acción sensible con motivo obligatorio para dejar trazabilidad operativa.
                       </p>
                     </div>
-                    <form onSubmit={onAdjustment} className="form-grid form-grid--two compact-card">
+                    <form onSubmit={onAdjustment} className="form-grid compact-card">
                       <label className="field">
                         <span className="field-label">Dirección</span>
                         <select
@@ -1674,7 +1532,7 @@ export default function AdminHomePage() {
                         />
                       </label>
                       <button
-                        className="button button--danger button--block"
+                        className="button button--danger button--block button--touch"
                         type="submit"
                         disabled={adjustmentPending}
                       >
@@ -1685,7 +1543,14 @@ export default function AdminHomePage() {
                 </div>
 
                 <div className="stack compact-list">
-                  <h3>Transacciones</h3>
+                  <div className="toolbar">
+                    <h3>Últimos movimientos</h3>
+                    {walletTransactions.length > recentWalletTransactions.length ? (
+                      <span className="meta-text">
+                        Mostrando {recentWalletTransactions.length} de {walletTransactions.length}
+                      </span>
+                    ) : null}
+                  </div>
                   {walletTransactions.length === 0 ? (
                     <EmptyState
                       title="Sin movimientos todavía"
@@ -1693,7 +1558,7 @@ export default function AdminHomePage() {
                     />
                   ) : (
                     <div className="list-grid compact-list">
-                      {walletTransactions.map((transaction) => (
+                      {recentWalletTransactions.map((transaction) => (
                         <div key={transaction.id} className="transaction-row compact-card">
                           <div className="stack" style={{ gap: '0.35rem' }}>
                             <div className="chip-row">
@@ -1708,7 +1573,7 @@ export default function AdminHomePage() {
                               {formatDateTime(transaction.createdAt)}
                             </span>
                           </div>
-                          <div className="stack" style={{ gap: '0.35rem', maxWidth: 320 }}>
+                          <div className="stack" style={{ gap: '0.35rem', maxWidth: 260 }}>
                             <span className="meta-text">
                               Actor: {transaction.createdByRole ?? 'n/a'} · Ref:{' '}
                               {transaction.referenceType ?? 'n/a'} {transaction.referenceId ?? '—'}
@@ -1730,8 +1595,209 @@ export default function AdminHomePage() {
               )
             )}
           </SectionCard>
-        </div>
+        </aside>
       </div>
+
+      {activeSurface === 'menu' ? (
+        <div id="admin-menu">
+          <SectionCard>
+            <CardHeader>
+              <div className="stack">
+                <h2>Configuración de menú</h2>
+                <p>
+                  Superficie terciaria para creación, attach y visibilidad por sucursal, separada de
+                  la operación en vivo.
+                </p>
+              </div>
+            </CardHeader>
+            {menuError ? <InlineFeedback tone="error" message={menuError} /> : null}
+            {menuLoading ? (
+              <LoadingBlock label="Cargando configuración del menú…" />
+            ) : (
+              <>
+                <div className="stack compact-list">
+                  <InlineFeedback
+                    tone="info"
+                    message="Flujo único del menú: primero crea el producto base, luego adjúntalo a la sucursal activa y finalmente revisa la configuración visible."
+                  />
+                  <div className="menu-config-grid">
+                    <form
+                      onSubmit={onCreateBaseItem}
+                      className="section-card compact-card"
+                      style={{ padding: '1.1rem' }}
+                    >
+                      <div className="stack">
+                        <h3>Crear producto base</h3>
+                        <p className="helper-text">
+                          Define el producto reusable una sola vez antes de asignarlo a sucursales.
+                        </p>
+                      </div>
+                      <label className="field">
+                        <span className="field-label">Code</span>
+                        <input
+                          value={createCode}
+                          onChange={(event) => setCreateCode(event.target.value)}
+                          placeholder="latte_12oz"
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Nombre</span>
+                        <input
+                          value={createName}
+                          onChange={(event) => setCreateName(event.target.value)}
+                          placeholder="Latte"
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Descripción</span>
+                        <textarea
+                          value={createDescription}
+                          onChange={(event) => setCreateDescription(event.target.value)}
+                          placeholder="Notas breves para equipo y cliente"
+                        />
+                      </label>
+                      <button
+                        className="button button--primary button--touch"
+                        type="submit"
+                        disabled={menuActionLoading === 'create'}
+                      >
+                        {menuActionLoading === 'create' ? 'Creando…' : 'Crear producto'}
+                      </button>
+                    </form>
+
+                    <form
+                      onSubmit={onAttachItem}
+                      className="section-card compact-card"
+                      style={{ padding: '1.1rem' }}
+                    >
+                      <div className="stack">
+                        <h3>Adjuntar a sucursal</h3>
+                        <p className="helper-text">
+                          Convierte un producto base en una opción vendible dentro de la tienda
+                          activa.
+                        </p>
+                      </div>
+                      <label className="field">
+                        <span className="field-label">Producto base</span>
+                        <select
+                          value={attachMenuItemId}
+                          onChange={(event) => setAttachMenuItemId(event.target.value)}
+                        >
+                          {menuOverview?.availableBaseItems.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span className="field-label">Precio CLP</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={attachPriceAmount}
+                          onChange={(event) => setAttachPriceAmount(event.target.value)}
+                        />
+                      </label>
+                      <button
+                        className="button button--primary button--touch"
+                        type="submit"
+                        disabled={menuActionLoading === 'attach'}
+                      >
+                        {menuActionLoading === 'attach' ? 'Adjuntando…' : 'Adjuntar producto'}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+
+                <div className="stack compact-list">
+                  <h3>Configuración actual</h3>
+                  {menuOverview?.configuredItems.length ? (
+                    <div className="list-grid compact-list">
+                      {menuOverview.configuredItems.map((item) => {
+                        const pending = menuActionLoading === item.menuItemId;
+                        return (
+                          <article
+                            key={item.storeMenuItemId}
+                            className="menu-item-card compact-card"
+                          >
+                            <div className="menu-item-card__header">
+                              <div className="stack" style={{ gap: '0.35rem' }}>
+                                <strong>{item.name}</strong>
+                                <span className="meta-text">{item.code}</span>
+                                {item.description ? (
+                                  <span className="meta-text">{item.description}</span>
+                                ) : null}
+                              </div>
+                              <div
+                                className="stack"
+                                style={{ gap: '0.35rem', alignItems: 'flex-end' }}
+                              >
+                                <strong>{formatClp(item.priceAmount)}</strong>
+                                <div className="chip-row">
+                                  <StatusChip
+                                    label={item.isVisible ? 'Activo' : 'Oculto'}
+                                    tone={item.isVisible ? 'success' : 'muted'}
+                                  />
+                                  <StatusChip
+                                    label={item.isInStock ? 'En stock' : 'Sin stock'}
+                                    tone={item.isInStock ? 'info' : 'warning'}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="inline-actions inline-actions--tight">
+                              <button
+                                className="button button--secondary button--touch"
+                                type="button"
+                                onClick={() =>
+                                  onUpdateStoreItem(item.menuItemId, {
+                                    priceAmount: item.priceAmount,
+                                    isVisible: !item.isVisible,
+                                    isInStock: item.isInStock,
+                                    sortOrder: item.sortOrder,
+                                  })
+                                }
+                                disabled={pending}
+                              >
+                                {pending
+                                  ? 'Actualizando…'
+                                  : item.isVisible
+                                    ? 'Ocultar producto'
+                                    : 'Mostrar producto'}
+                              </button>
+                              <button
+                                className="button button--ghost button--touch"
+                                type="button"
+                                onClick={() =>
+                                  onUpdateStoreItem(item.menuItemId, {
+                                    priceAmount: item.priceAmount,
+                                    isVisible: item.isVisible,
+                                    isInStock: !item.isInStock,
+                                    sortOrder: item.sortOrder,
+                                  })
+                                }
+                                disabled={pending}
+                              >
+                                {item.isInStock ? 'Marcar sin stock' : 'Marcar con stock'}
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      title="Sin productos configurados"
+                      description="Primero crea o adjunta un producto para que esta sucursal pueda venderlo."
+                    />
+                  )}
+                </div>
+              </>
+            )}
+          </SectionCard>
+        </div>
+      ) : null}
     </AppShell>
   );
 }
